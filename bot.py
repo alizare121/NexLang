@@ -1,9 +1,13 @@
 import os
 import logging
 import json
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 import openai
+
+# Import the translation cache
+from translation_cache import TranslationCache
 
 # تلاش برای import کردن dotenv، اگر نصب نبود از آن صرف نظر کن
 try:
@@ -26,94 +30,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ترجمه‌های پیش‌فرض برای پیام‌های پرکاربرد
-TRANSLATIONS = {
-    "fa": {  # Persian translations
-        "Welcome to the Language Learning Bot! 🌍\n\nPlease select your native language:": 
-            "به ربات آموزش زبان خوش آمدید! 🌍\n\nلطفاً زبان مادری خود را انتخاب کنید:",
-        
-        "Great! You've selected {language} as your native language. Now, please select the language you want to learn:": 
-            "عالی! شما {language} را به عنوان زبان مادری خود انتخاب کرده‌اید. حالا لطفاً زبانی را که می‌خواهید یاد بگیرید انتخاب کنید:",
-        
-        "Excellent! You've chosen to learn {language}. Now, let's assess your current proficiency level. Please write a few sentences in {language} so I can evaluate your level.": 
-            "عالی! شما انتخاب کرده‌اید که {language} را یاد بگیرید. حالا بیایید سطح مهارت فعلی شما را ارزیابی کنیم. لطفاً چند جمله به {language} بنویسید تا بتوانم سطح شما را ارزیابی کنم.",
-        
-        "Based on your sample, your proficiency level in {language} is: {level}.\n\nPlease select a learning mode:": 
-            "بر اساس نمونه شما، سطح مهارت شما در {language} برابر است با: {level}.\n\nلطفاً یک حالت یادگیری را انتخاب کنید:",
-        
-        "Curriculum": "برنامه درسی",
-        "Vocabulary Practice": "تمرین لغات",
-        "Useful Phrases": "عبارات کاربردی",
-        "Conversation Practice": "تمرین مکالمه",
-        
-        "Previous": "قبلی",
-        "Next": "بعدی",
-        
-        "Here's a personalized curriculum for your {level} level in {language}.": 
-            "در اینجا یک برنامه درسی شخصی‌سازی شده برای سطح {level} شما در {language} آمده است.",
-        
-        "Let's practice some vocabulary appropriate for your {level} level in {language}.": 
-            "بیایید برخی از لغات مناسب برای سطح {level} شما در {language} را تمرین کنیم.",
-        
-        "Let's learn some useful phrases in {language} for your {level} level.": 
-            "بیایید برخی از عبارات مفید در {language} را برای سطح {level} شما یاد بگیریم.",
-        
-        "Let's practice conversation in {language}. I'll help you with dialogue practice.": 
-            "بیایید مکالمه در {language} را تمرین کنیم. من به شما در تمرین گفتگو کمک خواهم کرد.",
-            
-        "Please select your native language:":
-            "لطفاً زبان مادری خود را انتخاب کنید:",
-            
-        "Please select the language you want to learn:":
-            "لطفاً زبانی را که می‌خواهید یاد بگیرید انتخاب کنید:",
-            
-        "Your learning progress has been reset. Please select the language you want to learn:":
-            "پیشرفت یادگیری شما بازنشانی شد. لطفاً زبانی را که می‌خواهید یاد بگیرید انتخاب کنید:",
-            
-        "This bot helps you learn a new language. Commands:\n/start - Restart the language selection process\n/help - Show this help message\n/reset - Reset your learning progress":
-            "این ربات به شما کمک می‌کند زبان جدیدی یاد بگیرید. دستورات:\n/start - شروع مجدد فرآیند انتخاب زبان\n/help - نمایش این پیام راهنما\n/reset - بازنشانی پیشرفت یادگیری شما",
-            
-        "Sorry, I couldn't generate learning content at this time. Please try again later.":
-            "متأسفم، در حال حاضر نمی‌توانم محتوای آموزشی تولید کنم. لطفاً بعداً دوباره امتحان کنید.",
-            
-        "Sorry, I couldn't generate a response at this time. Please try again later.":
-            "متأسفم، در حال حاضر نمی‌توانم پاسخی تولید کنم. لطفاً بعداً دوباره امتحان کنید."
-    },
-    # می‌توانید ترجمه‌های سایر زبان‌ها را نیز اضافه کنید
-}
-
-def get_translation(text, lang_code, **kwargs):
-    """Get translation for a text in the specified language."""
-    if lang_code not in TRANSLATIONS:
-        return text
-    
-    # جستجو در ترجمه‌های موجود
-    if text in TRANSLATIONS[lang_code]:
-        translated = TRANSLATIONS[lang_code][text]
-    else:
-        # جستجو با الگوی متن
-        for template, translation in TRANSLATIONS[lang_code].items():
-            if "{" in template and "}" in template:
-                # تبدیل الگو به regex برای تطبیق
-                import re
-                pattern = re.escape(template).replace("\\{", "{").replace("\\}", "}")
-                for key, value in kwargs.items():
-                    pattern = pattern.replace("{" + key + "}", re.escape(str(value)))
-                
-                if re.match(pattern, text):
-                    translated = translation
-                    for key, value in kwargs.items():
-                        translated = translated.replace("{" + key + "}", str(value))
-                    return translated
-        
-        # اگر ترجمه پیدا نشد
-        return text
-    
-    # جایگزینی پارامترها
-    for key, value in kwargs.items():
-        translated = translated.replace("{" + key + "}", str(value))
-    
-    return translated
+# Initialize translation cache
+translation_cache = TranslationCache()
 
 # لیست کامل‌تر زبان‌های جهان
 LANGUAGES = {
@@ -195,32 +113,15 @@ LANGUAGES = {
 user_data = {}
 
 async def translate_text(text, source_lang, target_lang):
-    """Translate text using OpenAI."""
+    """Translate text using cache first, then OpenAI."""
     if source_lang == target_lang:
         return text
     
-    # برای زبان فارسی، از ترجمه‌های پیش‌فرض استفاده کنید
-    if target_lang == "fa":
-        # بررسی کنید آیا ترجمه پیش‌فرض وجود دارد
-        for template in TRANSLATIONS["fa"]:
-            if text == template or text.startswith(template.split("{")[0]):
-                # استخراج پارامترها
-                params = {}
-                if "{language}" in template and "{" in text:
-                    try:
-                        language = text.split("You've selected ")[1].split(" as")[0]
-                        params["language"] = language
-                    except:
-                        pass
-                
-                if "{level}" in template and "level in" in text:
-                    try:
-                        level = text.split("level is: ")[1].split(".")[0]
-                        params["level"] = level
-                    except:
-                        pass
-                
-                return get_translation(template, "fa", **params)
+    # Check if we have this translation in cache
+    cached_translation = translation_cache.get_translation(text, source_lang, target_lang)
+    if cached_translation:
+        logger.info(f"Using cached translation for {source_lang} -> {target_lang}")
+        return cached_translation
     
     try:
         # برای اطمینان از عملکرد صحیح، کد زبان را به نام کامل تبدیل می‌کنیم
@@ -237,7 +138,23 @@ async def translate_text(text, source_lang, target_lang):
             "zh": "Chinese",
             "ar": "Arabic",
             "hi": "Hindi",
-            "tr": "Turkish"
+            "tr": "Turkish",
+            "ko": "Korean",
+            "nl": "Dutch",
+            "sv": "Swedish",
+            "no": "Norwegian",
+            "da": "Danish",
+            "fi": "Finnish",
+            "pl": "Polish",
+            "uk": "Ukrainian",
+            "cs": "Czech",
+            "hu": "Hungarian",
+            "el": "Greek",
+            "he": "Hebrew",
+            "th": "Thai",
+            "vi": "Vietnamese",
+            "id": "Indonesian"
+            # می‌توانید زبان‌های بیشتری اضافه کنید
         }
         
         source_lang_name = language_names.get(source_lang, source_lang)
@@ -252,7 +169,7 @@ async def translate_text(text, source_lang, target_lang):
         """
         
         response = await openai.ChatCompletion.acreate(
-            model="gpt-3.5-turbo",  # استفاده از مدل سریع‌تر
+            model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a professional translator. Provide only the translation, no explanations or additional text."},
                 {"role": "user", "content": prompt}
@@ -261,36 +178,19 @@ async def translate_text(text, source_lang, target_lang):
         
         translated_text = response.choices[0].message.content.strip()
         logger.info(f"Translated from {source_lang} to {target_lang}: {text} -> {translated_text}")
+        
+        # Add successful translation to cache
+        translation_cache.add_translation(text, translated_text, source_lang, target_lang)
+        
         return translated_text
     except Exception as e:
         logger.error(f"Translation error: {e}")
-        
-        # برای زبان فارسی، اگر ترجمه با OpenAI شکست خورد، از ترجمه‌های پیش‌فرض استفاده کنید
-        if target_lang == "fa":
-            for key, value in TRANSLATIONS["fa"].items():
-                if text.startswith(key.split("{")[0]):
-                    return value
-        
         return text  # Fallback to original text
 
 async def translate_buttons(buttons, source_lang, target_lang):
     """Translate a list of button labels."""
     translated_buttons = []
     
-    # برای زبان فارسی، از ترجمه‌های پیش‌فرض استفاده کنید
-    if target_lang == "fa":
-        for button in buttons:
-            if button in TRANSLATIONS["fa"]:
-                translated_buttons.append(TRANSLATIONS["fa"][button])
-            else:
-                try:
-                    translated = await translate_text(button, source_lang, target_lang)
-                    translated_buttons.append(translated)
-                except:
-                    translated_buttons.append(button)
-        return translated_buttons
-    
-    # برای سایر زبان‌ها، از OpenAI استفاده کنید
     for button in buttons:
         try:
             translated_button = await translate_text(button, source_lang, target_lang)
@@ -395,16 +295,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         # پیام اصلی به انگلیسی
         original_message = f"Great! You've selected {lang_name} as your native language. Now, please select the language you want to learn:"
         
-        # برای زبان فارسی، از ترجمه‌های پیش‌فرض استفاده کنید
-        if lang_code == "fa":
-            translated_message = get_translation(
-                "Great! You've selected {language} as your native language. Now, please select the language you want to learn:",
-                "fa",
-                language=lang_name
-            )
-        else:
-            # برای سایر زبان‌ها، از OpenAI استفاده کنید
-            translated_message = await translate_text(original_message, "en", lang_code)
+        # ترجمه پیام به زبان کاربر
+        translated_message = await translate_text(original_message, "en", lang_code)
         
         logger.info(f"Original: {original_message}")
         logger.info(f"Translated: {translated_message}")
@@ -448,14 +340,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             for i, keyboard in enumerate(keyboards):
                 nav_row = []
                 
-                # برای زبان فارسی، از ترجمه‌های پیش‌فرض استفاده کنید
-                if lang_code == "fa":
-                    prev_text = "قبلی"
-                    next_text = "بعدی"
-                else:
-                    # برای سایر زبان‌ها، از OpenAI استفاده کنید
-                    prev_text = await translate_text("Previous", "en", lang_code)
-                    next_text = await translate_text("Next", "en", lang_code)
+                # ترجمه دکمه‌های ناوبری
+                prev_text = await translate_text("Previous", "en", lang_code)
+                next_text = await translate_text("Next", "en", lang_code)
                 
                 if i > 0:
                     nav_row.append(InlineKeyboardButton(f"◀️ {prev_text}", callback_data=f"target_page_{i-1}"))
@@ -485,13 +372,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         
         # Translate the message
         original_message = "Please select the language you want to learn:"
-        
-        # برای زبان فارسی، از ترجمه‌های پیش‌فرض استفاده کنید
-        if native_lang == "fa":
-            translated_message = get_translation(original_message, "fa")
-        else:
-            # برای سایر زبان‌ها، از OpenAI استفاده کنید
-            translated_message = await translate_text(original_message, "en", native_lang)
+        translated_message = await translate_text(original_message, "en", native_lang)
         
         await query.edit_message_text(
             text=translated_message,
@@ -509,16 +390,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         # پیام اصلی به انگلیسی
         original_message = f"Excellent! You've chosen to learn {lang_name}. Now, let's assess your current proficiency level. Please write a few sentences in {lang_name} so I can evaluate your level."
         
-        # برای زبان فارسی، از ترجمه‌های پیش‌فرض استفاده کنید
-        if native_lang == "fa":
-            translated_message = get_translation(
-                "Excellent! You've chosen to learn {language}. Now, let's assess your current proficiency level. Please write a few sentences in {language} so I can evaluate your level.",
-                "fa",
-                language=lang_name
-            )
-        else:
-            # برای سایر زبان‌ها، از OpenAI استفاده کنید
-            translated_message = await translate_text(original_message, "en", native_lang)
+        # ترجمه پیام به زبان کاربر
+        translated_message = await translate_text(original_message, "en", native_lang)
         
         await query.edit_message_text(text=translated_message)
         
@@ -542,38 +415,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         elif mode == "conversation":
             original_response = f"Let's practice conversation in {target_lang_name}. I'll help you with dialogue practice."
         
-        # برای زبان فارسی، از ترجمه‌های پیش‌فرض استفاده کنید
-        if native_lang_code == "fa":
-            if mode == "curriculum":
-                translated_response = get_translation(
-                    "Here's a personalized curriculum for your {level} level in {language}.",
-                    "fa",
-                    level=proficiency,
-                    language=target_lang_name
-                )
-            elif mode == "vocabulary":
-                translated_response = get_translation(
-                    "Let's practice some vocabulary appropriate for your {level} level in {language}.",
-                    "fa",
-                    level=proficiency,
-                    language=target_lang_name
-                )
-            elif mode == "phrases":
-                translated_response = get_translation(
-                    "Let's learn some useful phrases in {language} for your {level} level.",
-                    "fa",
-                    level=proficiency,
-                    language=target_lang_name
-                )
-            elif mode == "conversation":
-                translated_response = get_translation(
-                    "Let's practice conversation in {language}. I'll help you with dialogue practice.",
-                    "fa",
-                    language=target_lang_name
-                )
-        else:
-            # برای سایر زبان‌ها، از OpenAI استفاده کنید
-            translated_response = await translate_text(original_response, "en", native_lang_code)
+        # ترجمه پاسخ به زبان کاربر
+        translated_response = await translate_text(original_response, "en", native_lang_code)
         
         # Generate learning content based on mode
         learning_content = await generate_learning_content(
@@ -617,34 +460,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             f"Please select a learning mode:"
         )
         
-        # برای زبان فارسی، از ترجمه‌های پیش‌فرض استفاده کنید
-        if native_lang_code == "fa":
-            translated_message = get_translation(
-                "Based on your sample, your proficiency level in {language} is: {level}.\n\nPlease select a learning mode:",
-                "fa",
-                language=target_lang,
-                level=proficiency_level
-            )
-        else:
-            # برای سایر زبان‌ها، از OpenAI استفاده کنید
-            translated_message = await translate_text(original_message, "en", native_lang_code)
+        # ترجمه پیام به زبان کاربر
+        translated_message = await translate_text(original_message, "en", native_lang_code)
         
         # Create learning mode selection keyboard with translated labels
         mode_buttons = [
             "Curriculum", "Vocabulary Practice", "Useful Phrases", "Conversation Practice"
         ]
         
-        # برای زبان فارسی، از ترجمه‌های پیش‌فرض استفاده کنید
-        if native_lang_code == "fa":
-            translated_buttons = [
-                get_translation("Curriculum", "fa"),
-                get_translation("Vocabulary Practice", "fa"),
-                get_translation("Useful Phrases", "fa"),
-                get_translation("Conversation Practice", "fa")
-            ]
-        else:
-            # برای سایر زبان‌ها، از OpenAI استفاده کنید
-            translated_buttons = await translate_buttons(mode_buttons, "en", native_lang_code)
+        # ترجمه دکمه‌ها
+        translated_buttons = await translate_buttons(mode_buttons, "en", native_lang_code)
         
         keyboard = [
             [InlineKeyboardButton(translated_buttons[0], callback_data="mode_curriculum")],
@@ -728,21 +553,11 @@ async def generate_learning_content(mode, target_lang, native_lang, proficiency,
     except Exception as e:
         logger.error(f"Content generation error: {e}")
         
-        # برای زبان فارسی، از ترجمه‌های پیش‌فرض استفاده کنید
-        if native_lang_code == "fa":
-            error_message = get_translation(
-                "Sorry, I couldn't generate learning content at this time. Please try again later.",
-                "fa"
-            )
-        else:
-            # برای سایر زبان‌ها، از OpenAI استفاده کنید
-            error_message = await translate_text(
-                "Sorry, I couldn't generate learning content at this time. Please try again later.",
-                "en",
-                native_lang_code
-            )
+        # ترجمه پیام خطا به زبان کاربر
+        error_message = "Sorry, I couldn't generate learning content at this time. Please try again later."
+        translated_error = await translate_text(error_message, "en", native_lang_code)
         
-        return error_message
+        return translated_error
 
 async def generate_response(user_message, mode, target_lang, native_lang, native_lang_code, proficiency):
     """Generate a response to the user's message based on learning mode."""
@@ -765,21 +580,11 @@ async def generate_response(user_message, mode, target_lang, native_lang, native
     except Exception as e:
         logger.error(f"Response generation error: {e}")
         
-        # برای زبان فارسی، از ترجمه‌های پیش‌فرض استفاده کنید
-        if native_lang_code == "fa":
-            error_message = get_translation(
-                "Sorry, I couldn't generate a response at this time. Please try again later.",
-                "fa"
-            )
-        else:
-            # برای سایر زبان‌ها، از OpenAI استفاده کنید
-            error_message = await translate_text(
-                "Sorry, I couldn't generate a response at this time. Please try again later.",
-                "en",
-                native_lang_code
-            )
+        # ترجمه پیام خطا به زبان کاربر
+        error_message = "Sorry, I couldn't generate a response at this time. Please try again later."
+        translated_error = await translate_text(error_message, "en", native_lang_code)
         
-        return error_message
+        return translated_error
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /help is issued."""
@@ -795,12 +600,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if user_id in user_data and user_data[user_id]["native_language"]:
         native_lang = user_data[user_id]["native_language"]["code"]
         
-        # برای زبان فارسی، از ترجمه‌های پیش‌فرض استفاده کنید
-        if native_lang == "fa":
-            translated_help = get_translation(help_text, "fa")
-        else:
-            # برای سایر زبان‌ها، از OpenAI استفاده کنید
-            translated_help = await translate_text(help_text, "en", native_lang)
+        # ترجمه پیام راهنما به زبان کاربر
+        translated_help = await translate_text(help_text, "en", native_lang)
         
         await update.message.reply_text(translated_help)
     else:
@@ -829,12 +630,8 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             # Create target language selection keyboard with pagination (same as in button_callback)
             original_reset_text = "Your learning progress has been reset. Please select the language you want to learn:"
             
-            # برای زبان فارسی، از ترجمه‌های پیش‌فرض استفاده کنید
-            if native_lang_code == "fa":
-                translated_reset = get_translation(original_reset_text, "fa")
-            else:
-                # برای سایر زبان‌ها، از OpenAI استفاده کنید
-                translated_reset = await translate_text(original_reset_text, "en", native_lang_code)
+            # ترجمه پیام به زبان کاربر
+            translated_reset = await translate_text(original_reset_text, "en", native_lang_code)
             
             # Create language selection keyboard with pagination
             languages_list = list(LANGUAGES.keys())
@@ -875,14 +672,9 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 for i, keyboard in enumerate(keyboards):
                     nav_row = []
                     
-                    # برای زبان فارسی، از ترجمه‌های پیش‌فرض استفاده کنید
-                    if native_lang_code == "fa":
-                        prev_text = "قبلی"
-                        next_text = "بعدی"
-                    else:
-                        # برای سایر زبان‌ها، از OpenAI استفاده کنید
-                        prev_text = await translate_text("Previous", "en", native_lang_code)
-                        next_text = await translate_text("Next", "en", native_lang_code)
+                    # ترجمه دکمه‌های ناوبری
+                    prev_text = await translate_text("Previous", "en", native_lang_code)
+                    next_text = await translate_text("Next", "en", native_lang_code)
                     
                     if i > 0:
                         nav_row.append(InlineKeyboardButton(f"◀️ {prev_text}", callback_data=f"target_page_{i-1}"))
@@ -905,6 +697,52 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     else:
         await start(update, context)
 
+async def preload_common_translations():
+    """Preload translations for common phrases to the cache."""
+    common_phrases = {
+        "en": [
+            "Welcome to the Language Learning Bot! 🌍\n\nPlease select your native language:",
+            "Please select your native language:",
+            "Great! You've selected English as your native language. Now, please select the language you want to learn:",
+            "Please select the language you want to learn:",
+            "Excellent! You've chosen to learn English. Now, let's assess your current proficiency level. Please write a few sentences in English so I can evaluate your level.",
+            "Based on your sample, your proficiency level in English is: Beginner.\n\nPlease select a learning mode:",
+            "Curriculum",
+            "Vocabulary Practice",
+            "Useful Phrases",
+            "Conversation Practice",
+            "Previous",
+            "Next",
+            "Your learning progress has been reset. Please select the language you want to learn:",
+            "This bot helps you learn a new language. Commands:\n/start - Restart the language selection process\n/help - Show this help message\n/reset - Reset your learning progress",
+            "Sorry, I couldn't generate learning content at this time. Please try again later.",
+            "Sorry, I couldn't generate a response at this time. Please try again later."
+        ]
+    }
+    
+    # لیست زبان‌هایی که می‌خواهیم ترجمه‌های آنها را از قبل ذخیره کنیم
+    target_languages = ["fa", "es", "fr", "ar", "de", "ru", "zh", "ja"]
+    
+    logger.info("Preloading common translations...")
+    
+    for source_lang, phrases in common_phrases.items():
+        for target_lang in target_languages:
+            # فقط زبان‌های متفاوت
+            if source_lang != target_lang:
+                for phrase in phrases:
+                    # اگر در بافر نباشد، ترجمه کنید
+                    if not translation_cache.get_translation(phrase, source_lang, target_lang):
+                        try:
+                            # ترجمه و ذخیره در بافر
+                            translated = await translate_text(phrase, source_lang, target_lang)
+                            logger.info(f"Preloaded translation for {source_lang} -> {target_lang}: {phrase[:30]}...")
+                        except Exception as e:
+                            logger.error(f"Error preloading translation: {e}")
+    
+    # ذخیره تمام ترجمه‌های پیش‌بارگذاری شده
+    translation_cache.save_cache()
+    logger.info("Preloading completed.")
+
 async def test_translation():
     """Test the translation functionality."""
     test_text = "Hello, welcome to the language learning bot!"
@@ -913,8 +751,14 @@ async def test_translation():
     logger.info(f"English: {test_text}")
     logger.info(f"Persian: {translated}")
 
-def main() -> None:
+async def main() -> None:
     """Start the bot."""
+    # تست ترجمه
+    await test_translation()
+    
+    # پیش‌بارگذاری ترجمه‌های پرکاربرد
+    await preload_common_translations()
+    
     # Create the Application
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
@@ -929,4 +773,5 @@ def main() -> None:
     application.run_polling()
 
 if __name__ == '__main__':
-    main()
+    # Run the async main function
+    asyncio.run(main())
