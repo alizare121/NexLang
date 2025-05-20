@@ -4,7 +4,7 @@ import json
 import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
-from openai import OpenAI
+import openai  # استفاده از openai به روش قدیمی
 
 # Import the translation cache
 from translation_cache import TranslationCache
@@ -20,8 +20,8 @@ except ImportError:
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', '7731221586:AAF0uDfEW-CkQ8C_zs5Wfmrf4oGPo_ZffKc')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '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')
 
-# ایجاد کلاینت OpenAI
-client = OpenAI(api_key=OPENAI_API_KEY)
+# تنظیم OpenAI API key
+openai.api_key = OPENAI_API_KEY
 
 # Configure logging
 logging.basicConfig(
@@ -168,8 +168,8 @@ async def translate_text(text, source_lang, target_lang):
         Text to translate: {text}
         """
         
-        # استفاده از API جدید OpenAI
-        response = client.chat.completions.create(
+        # استفاده از API قدیمی OpenAI
+        response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a professional translator. Provide only the translation, no explanations or additional text."},
@@ -177,7 +177,7 @@ async def translate_text(text, source_lang, target_lang):
             ]
         )
         
-        translated_text = response.choices[0].message.content.strip()
+        translated_text = response.choices[0].message['content'].strip()
         logger.info(f"Translated from {source_lang} to {target_lang}: {text} -> {translated_text}")
         
         # Add successful translation to cache
@@ -509,15 +509,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def assess_proficiency(text, language):
     """Assess language proficiency using OpenAI."""
     try:
-        # استفاده از API جدید OpenAI
-        response = client.chat.completions.create(
+        # استفاده از API قدیمی OpenAI
+        response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": f"You are a language proficiency assessor for {language}. Assess the following text and determine the proficiency level (Beginner, Intermediate, Advanced) based on grammar, vocabulary, and fluency. Only respond with one word: the level."},
                 {"role": "user", "content": text}
             ]
         )
-        level = response.choices[0].message.content.strip()
+        level = response.choices[0].message['content'].strip()
         # Normalize the response
         if "beginner" in level.lower():
             return "Beginner"
@@ -541,15 +541,15 @@ async def generate_learning_content(mode, target_lang, native_lang, proficiency,
     }
     
     try:
-        # استفاده از API جدید OpenAI
-        response = client.chat.completions.create(
+        # استفاده از API قدیمی OpenAI
+        response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": f"You are a language learning assistant. Provide helpful, structured content for language learners. Write your response in {native_lang}, with examples in {target_lang} when appropriate."},
                 {"role": "user", "content": prompts[mode]}
             ]
         )
-        content = response.choices[0].message.content
+        content = response.choices[0].message['content']
         
         # No need to translate as the content already includes translations to native language
         return content
@@ -572,15 +572,15 @@ async def generate_response(user_message, mode, target_lang, native_lang, native
     }
     
     try:
-        # استفاده از API جدید OpenAI
-        response = client.chat.completions.create(
+        # استفاده از API قدیمی OpenAI
+        response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": system_prompts[mode]},
                 {"role": "user", "content": user_message}
             ]
         )
-        return response.choices[0].message.content
+        return response.choices[0].message['content']
     except Exception as e:
         logger.error(f"Response generation error: {e}")
         
