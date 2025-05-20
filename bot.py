@@ -4,7 +4,7 @@ import json
 import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
-import openai
+from openai import OpenAI
 
 # Import the translation cache
 from translation_cache import TranslationCache
@@ -20,8 +20,8 @@ except ImportError:
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', '7731221586:AAF0uDfEW-CkQ8C_zs5Wfmrf4oGPo_ZffKc')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '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')
 
-# تنظیم کلید OpenAI
-openai.api_key = OPENAI_API_KEY
+# ایجاد کلاینت OpenAI
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Configure logging
 logging.basicConfig(
@@ -168,7 +168,8 @@ async def translate_text(text, source_lang, target_lang):
         Text to translate: {text}
         """
         
-        response = await openai.ChatCompletion.acreate(
+        # استفاده از API جدید OpenAI
+        response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a professional translator. Provide only the translation, no explanations or additional text."},
@@ -508,7 +509,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def assess_proficiency(text, language):
     """Assess language proficiency using OpenAI."""
     try:
-        response = await openai.ChatCompletion.acreate(
+        # استفاده از API جدید OpenAI
+        response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": f"You are a language proficiency assessor for {language}. Assess the following text and determine the proficiency level (Beginner, Intermediate, Advanced) based on grammar, vocabulary, and fluency. Only respond with one word: the level."},
@@ -539,7 +541,8 @@ async def generate_learning_content(mode, target_lang, native_lang, proficiency,
     }
     
     try:
-        response = await openai.ChatCompletion.acreate(
+        # استفاده از API جدید OpenAI
+        response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": f"You are a language learning assistant. Provide helpful, structured content for language learners. Write your response in {native_lang}, with examples in {target_lang} when appropriate."},
@@ -569,7 +572,8 @@ async def generate_response(user_message, mode, target_lang, native_lang, native
     }
     
     try:
-        response = await openai.ChatCompletion.acreate(
+        # استفاده از API جدید OpenAI
+        response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": system_prompts[mode]},
