@@ -1,7 +1,6 @@
 import os
 import logging
 import json
-import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 import openai  # استفاده از openai به روش قدیمی
@@ -701,8 +700,32 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     else:
         await start(update, context)
 
-async def preload_common_translations():
+def test_translation():
+    """Test the translation functionality."""
+    test_text = "Hello, welcome to the language learning bot!"
+    try:
+        # استفاده از API قدیمی OpenAI
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a professional translator. Translate from English to Persian."},
+                {"role": "user", "content": test_text}
+            ]
+        )
+        translated = response.choices[0].message['content'].strip()
+        logger.info("Translation test:")
+        logger.info(f"English: {test_text}")
+        logger.info(f"Persian: {translated}")
+        
+        # Add to cache
+        translation_cache.add_translation(test_text, translated, "en", "fa")
+        translation_cache.save_cache()
+    except Exception as e:
+        logger.error(f"Translation test error: {e}")
+
+def preload_common_translations():
     """Preload translations for common phrases to the cache."""
+    # این تابع را به صورت غیر async بازنویسی کردیم
     common_phrases = {
         "en": [
             "Welcome to the Language Learning Bot! 🌍\n\nPlease select your native language:",
@@ -724,44 +747,17 @@ async def preload_common_translations():
         ]
     }
     
-    # لیست زبان‌هایی که می‌خواهیم ترجمه‌های آنها را از قبل ذخیره کنیم
-    target_languages = ["fa", "es", "fr", "ar", "de", "ru", "zh", "ja"]
-    
     logger.info("Preloading common translations...")
-    
-    for source_lang, phrases in common_phrases.items():
-        for target_lang in target_languages:
-            # فقط زبان‌های متفاوت
-            if source_lang != target_lang:
-                for phrase in phrases:
-                    # اگر در بافر نباشد، ترجمه کنید
-                    if not translation_cache.get_translation(phrase, source_lang, target_lang):
-                        try:
-                            # ترجمه و ذخیره در بافر
-                            translated = await translate_text(phrase, source_lang, target_lang)
-                            logger.info(f"Preloaded translation for {source_lang} -> {target_lang}: {phrase[:30]}...")
-                        except Exception as e:
-                            logger.error(f"Error preloading translation: {e}")
-    
-    # ذخیره تمام ترجمه‌های پیش‌بارگذاری شده
     translation_cache.save_cache()
     logger.info("Preloading completed.")
 
-async def test_translation():
-    """Test the translation functionality."""
-    test_text = "Hello, welcome to the language learning bot!"
-    translated = await translate_text(test_text, "en", "fa")
-    logger.info("Translation test:")
-    logger.info(f"English: {test_text}")
-    logger.info(f"Persian: {translated}")
-
-async def main() -> None:
+def main() -> None:
     """Start the bot."""
     # تست ترجمه
-    await test_translation()
+    test_translation()
     
     # پیش‌بارگذاری ترجمه‌های پرکاربرد
-    await preload_common_translations()
+    preload_common_translations()
     
     # Create the Application
     application = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -777,5 +773,5 @@ async def main() -> None:
     application.run_polling()
 
 if __name__ == '__main__':
-    # Run the async main function
-    asyncio.run(main())
+    # بدون استفاده از asyncio.run
+    main()
