@@ -108,6 +108,9 @@ LANGUAGES = {
     "Zulu": "zu"
 }
 
+# تعداد سوالات ارزیابی
+ASSESSMENT_QUESTIONS_COUNT = 10
+
 # User data storage (in a real application, use a database)
 user_data = {}
 
@@ -209,7 +212,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "native_language": None,
         "target_language": None,
         "proficiency_level": None,
-        "current_state": "selecting_native_language"
+        "current_state": "selecting_native_language",
+        "assessment": {
+            "questions": [],
+            "answers": [],
+            "current_question": 0
+        }
     }
     
     # Create language selection keyboard with pagination
@@ -383,17 +391,93 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         # Handle target language selection
         _, lang_code, lang_name = callback_data.split("_", 2)
         user_data[user_id]["target_language"] = {"code": lang_code, "name": lang_name}
-        user_data[user_id]["current_state"] = "proficiency_assessment"
+        
+        # تغییر حالت به مرحله اول ارزیابی
+        user_data[user_id]["current_state"] = "assessment_intro"
         
         native_lang = user_data[user_id]["native_language"]["code"]
         
         # پیام اصلی به انگلیسی
-        original_message = f"Excellent! You've chosen to learn {lang_name}. Now, let's assess your current proficiency level. Please write a few sentences in {lang_name} so I can evaluate your level."
+        original_message = f"""
+Excellent! You've chosen to learn {lang_name}.
+
+Now I'm going to ask you {ASSESSMENT_QUESTIONS_COUNT} questions to assess your current proficiency level in {lang_name}. 
+Try to answer in {lang_name} as best as you can. If you don't know the answer, you can say "I don't know" in {lang_name}.
+
+Are you ready to start the assessment?
+"""
         
         # ترجمه پیام به زبان کاربر
         translated_message = await translate_text(original_message, "en", native_lang)
         
-        await query.edit_message_text(text=translated_message)
+        # Create buttons for yes/no
+        yes_text = await translate_text("Yes, I'm ready", "en", native_lang)
+        no_text = await translate_text("No, later", "en", native_lang)
+        
+        keyboard = [
+            [InlineKeyboardButton(yes_text, callback_data="assessment_start")],
+            [InlineKeyboardButton(no_text, callback_data="assessment_cancel")]
+        ]
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            text=translated_message,
+            reply_markup=reply_markup
+        )
+    
+    elif callback_data == "assessment_start":
+        # Start the assessment
+        user_data[user_id]["current_state"] = "assessment_in_progress"
+        target_lang = user_data[user_id]["target_language"]["name"]
+        native_lang = user_data[user_id]["native_language"]["code"]
+        
+        # Generate assessment questions
+        questions = await generate_assessment_questions(target_lang, native_lang)
+        user_data[user_id]["assessment"]["questions"] = questions
+        user_data[user_id]["assessment"]["current_question"] = 0
+        user_data[user_id]["assessment"]["answers"] = []
+        
+        # Ask the first question
+        await ask_next_assessment_question(update, context, user_id)
+    
+    elif callback_data == "assessment_cancel":
+        # Cancel the assessment and go back to target language selection
+        native_lang = user_data[user_id]["native_language"]["code"]
+        target_lang = user_data[user_id]["target_language"]["name"]
+        
+        original_message = f"No problem. You can start the assessment when you're ready. In the meantime, I'll assume you're a beginner in {target_lang}."
+        translated_message = await translate_text(original_message, "en", native_lang)
+        
+        # Set the proficiency level to beginner by default
+        user_data[user_id]["proficiency_level"] = "Beginner"
+        user_data[user_id]["current_state"] = "selecting_learning_mode"
+        
+        # Create learning mode selection keyboard with translated labels
+        mode_buttons = [
+            "Curriculum", "Vocabulary Practice", "Useful Phrases", "Conversation Practice"
+        ]
+        
+        # ترجمه دکمه‌ها
+        translated_buttons = await translate_buttons(mode_buttons, "en", native_lang)
+        
+        # Show learning mode options
+        original_learning_prompt = f"Please select a learning mode:"
+        translated_learning_prompt = await translate_text(original_learning_prompt, "en", native_lang)
+        
+        keyboard = [
+            [InlineKeyboardButton(translated_buttons[0], callback_data="mode_curriculum")],
+            [InlineKeyboardButton(translated_buttons[1], callback_data="mode_vocabulary")],
+            [InlineKeyboardButton(translated_buttons[2], callback_data="mode_phrases")],
+            [InlineKeyboardButton(translated_buttons[3], callback_data="mode_conversation")]
+        ]
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            text=f"{translated_message}\n\n{translated_learning_prompt}",
+            reply_markup=reply_markup
+        )
         
     elif callback_data.startswith("mode_"):
         # Handle learning mode selection
@@ -443,22 +527,283 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     current_state = user_data[user_id]["current_state"]
     
-    if current_state == "proficiency_assessment":
-        # Assess user's proficiency level
-        target_lang = user_data[user_id]["target_language"]["name"]
-        native_lang_code = user_data[user_id]["native_language"]["code"]
-        native_lang_name = user_data[user_id]["native_language"]["name"]
+    if current_state == "assessment_in_progress":
+        # Handle assessment question response
+        current_question = user_data[user_id]["assessment"]["current_question"]
         
-        # Use OpenAI to assess proficiency
-        proficiency_level = await assess_proficiency(message_text, target_lang)
+        # Store the answer
+        user_data[user_id]["assessment"]["answers"].append(message_text)
+        
+        # Move to the next question or finish assessment
+        if current_question + 1 < len(user_data[user_id]["assessment"]["questions"]):
+            user_data[user_id]["assessment"]["current_question"] += 1
+            await ask_next_assessment_question(update, context, user_id)
+        else:
+            # Assessment complete, evaluate proficiency
+            await complete_assessment(update, context, user_id)
+    
+    elif current_state == "learning":
+        # Handle learning interaction
+        learning_mode = user_data[user_id]["learning_mode"]
+        target_lang_name = user_data[user_id]["target_language"]["name"]
+        native_lang_name = user_data[user_id]["native_language"]["name"]
+        native_lang_code = user_data[user_id]["native_language"]["code"]
+        proficiency = user_data[user_id]["proficiency_level"]
+        
+        # Generate response based on user's message and learning mode
+        response = await generate_response(
+            message_text,
+            learning_mode,
+            target_lang_name,
+            native_lang_name,
+            native_lang_code,
+            proficiency
+        )
+        
+        await update.message.reply_text(response)
+
+async def generate_assessment_questions(target_lang, native_lang_code):
+    """Generate assessment questions for the target language."""
+    try:
+        # Generate questions with OpenAI
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {
+                    "role": "system", 
+                    "content": f"""
+                    You are a language proficiency assessor for {target_lang}. 
+                    Create {ASSESSMENT_QUESTIONS_COUNT} assessment questions to determine a language learner's proficiency level (Beginner, Intermediate, Advanced).
+                    
+                    Questions should:
+                    1. Be of increasing difficulty
+                    2. Test grammar, vocabulary, comprehension, and expression
+                    3. Include a mix of multiple choice, short answer, and open-ended questions
+                    4. Be appropriate for assessing proficiency in {target_lang}
+                    
+                    Format your response as a JSON array of question objects with these fields:
+                    - question: The question text in the target language
+                    - translation: Translation of the question into the user's native language
+                    - type: The question type (multiple_choice, short_answer, open_ended)
+                    - options: Array of options (only for multiple_choice questions)
+                    - difficulty: The difficulty level (1-10)
+                    
+                    Do not include the correct answer in the output.
+                    """
+                }
+            ]
+        )
+        
+        # Extract and parse the questions
+        questions_json = response.choices[0].message['content']
+        try:
+            questions = json.loads(questions_json)
+        except json.JSONDecodeError:
+            # Try to extract JSON from the text if it's not pure JSON
+            import re
+            json_pattern = r'(\[\s*\{.*\}\s*\])'
+            match = re.search(json_pattern, questions_json, re.DOTALL)
+            if match:
+                questions_json = match.group(1)
+                questions = json.loads(questions_json)
+            else:
+                # Fallback to a simpler approach if JSON parsing fails
+                logger.error("Failed to parse JSON response for assessment questions")
+                questions = await generate_simple_assessment_questions(target_lang, native_lang_code)
+        
+        # Translate questions to user's native language if needed
+        for question in questions:
+            if "translation" not in question or not question["translation"]:
+                question["translation"] = await translate_text(question["question"], "auto", native_lang_code)
+        
+        return questions
+    
+    except Exception as e:
+        logger.error(f"Error generating assessment questions: {e}")
+        # Fallback to simpler questions if there's an error
+        return await generate_simple_assessment_questions(target_lang, native_lang_code)
+
+async def generate_simple_assessment_questions(target_lang, native_lang_code):
+    """Generate simple assessment questions as a fallback."""
+    questions = []
+    
+    # Basic questions that should work for any language
+    basic_questions = [
+        "What is your name?",
+        "How are you today?",
+        "Can you count from 1 to 10?",
+        "What day is it today?",
+        "What is your favorite color?",
+        "What do you do for work or study?",
+        "Describe your family briefly.",
+        "What did you do yesterday?",
+        "What will you do tomorrow?",
+        "Why are you learning this language?"
+    ]
+    
+    # Translate each question to the target language
+    for i, question in enumerate(basic_questions):
+        if i < ASSESSMENT_QUESTIONS_COUNT:
+            try:
+                # Translate to target language
+                target_question = await translate_text(question, "en", LANGUAGES[target_lang])
+                # Translate to native language
+                native_question = await translate_text(question, "en", native_lang_code)
+                
+                questions.append({
+                    "question": target_question,
+                    "translation": native_question,
+                    "type": "open_ended",
+                    "difficulty": min(i+1, 10)
+                })
+            except Exception as e:
+                logger.error(f"Error translating simple assessment question: {e}")
+                # Fallback to English if translation fails
+                questions.append({
+                    "question": question,
+                    "translation": question,
+                    "type": "open_ended",
+                    "difficulty": min(i+1, 10)
+                })
+    
+    return questions
+
+async def ask_next_assessment_question(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id):
+    """Ask the next assessment question to the user."""
+    assessment_data = user_data[user_id]["assessment"]
+    current_question_idx = assessment_data["current_question"]
+    current_question = assessment_data["questions"][current_question_idx]
+    
+    native_lang_code = user_data[user_id]["native_language"]["code"]
+    
+    # Create the question message with both languages
+    question_number = current_question_idx + 1
+    total_questions = len(assessment_data["questions"])
+    
+    # ترجمه عنوان سوال
+    question_header = f"Question {question_number}/{total_questions}:"
+    translated_header = await translate_text(question_header, "en", native_lang_code)
+    
+    # متن سوال به زبان هدف و ترجمه آن
+    target_question = current_question["question"]
+    native_question = current_question["translation"]
+    
+    # دستورالعمل پاسخ
+    instruction = "Please answer in the language you are learning."
+    translated_instruction = await translate_text(instruction, "en", native_lang_code)
+    
+    # ترکیب همه بخش‌ها
+    message = f"{translated_header}\n\n{target_question}\n\n{native_question}\n\n{translated_instruction}"
+    
+    # اگر سوال چندگزینه‌ای است، گزینه‌ها را نمایش بده
+    if current_question.get("type") == "multiple_choice" and "options" in current_question:
+        message += "\n\n" + "\n".join([f"{i+1}. {option}" for i, option in enumerate(current_question["options"])])
+        message += "\n\n" + await translate_text("Enter the number of your choice.", "en", native_lang_code)
+    
+    # Trigger a reply handler for the user's answer
+    if update.callback_query:
+        # If coming from a callback (button press)
+        await update.callback_query.message.reply_text(message)
+    else:
+        # If coming from a message handler
+        await update.message.reply_text(message)
+
+async def complete_assessment(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id):
+    """Complete the assessment and determine proficiency level."""
+    assessment_data = user_data[user_id]["assessment"]
+    questions = assessment_data["questions"]
+    answers = assessment_data["answers"]
+    target_lang = user_data[user_id]["target_language"]["name"]
+    native_lang_code = user_data[user_id]["native_language"]["code"]
+    
+    # Combine questions and answers for analysis
+    qa_pairs = []
+    for i, (question, answer) in enumerate(zip(questions, answers)):
+        qa_pairs.append({
+            "question": question["question"],
+            "answer": answer,
+            "difficulty": question.get("difficulty", i+1)
+        })
+    
+    # Analyze proficiency with OpenAI
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {
+                    "role": "system", 
+                    "content": f"""
+                    You are a language proficiency assessor for {target_lang}. 
+                    Analyze the following question-answer pairs to determine the learner's proficiency level.
+                    Provide a detailed assessment and classify the learner into one of these levels:
+                    - Beginner: Basic vocabulary, simple sentences, frequent errors
+                    - Intermediate: Good vocabulary, can form complex sentences, some errors
+                    - Advanced: Rich vocabulary, complex sentence structures, few errors
+                    
+                    For your response, include:
+                    1. A brief analysis of their strengths and weaknesses
+                    2. Their FINAL proficiency level (Beginner, Intermediate, or Advanced only)
+                    3. What they should focus on improving
+                    
+                    Format: Use JSON with the following structure:
+                    {{"analysis": "your analysis", "level": "their proficiency level", "focus_areas": ["area1", "area2", ...]}}
+                    """
+                },
+                {
+                    "role": "user", 
+                    "content": f"Assessment for {target_lang} learner:\n\n{json.dumps(qa_pairs, ensure_ascii=False)}"
+                }
+            ]
+        )
+        
+        # Extract the assessment result
+        result_text = response.choices[0].message['content']
+        
+        try:
+            # Try to parse as JSON
+            result = json.loads(result_text)
+            proficiency_level = result.get("level", "Beginner")
+            analysis = result.get("analysis", "")
+            focus_areas = result.get("focus_areas", [])
+            
+            # Normalize the level
+            if "beginner" in proficiency_level.lower():
+                proficiency_level = "Beginner"
+            elif "intermediate" in proficiency_level.lower():
+                proficiency_level = "Intermediate"
+            elif "advanced" in proficiency_level.lower():
+                proficiency_level = "Advanced"
+            else:
+                proficiency_level = "Beginner"
+            
+        except json.JSONDecodeError:
+            # If not valid JSON, extract the level with simple logic
+            logger.error("Failed to parse JSON response for assessment result")
+            if "advanced" in result_text.lower():
+                proficiency_level = "Advanced"
+            elif "intermediate" in result_text.lower():
+                proficiency_level = "Intermediate"
+            else:
+                proficiency_level = "Beginner"
+            
+            # Extract analysis with a simplified approach
+            analysis = result_text
+            focus_areas = []
+        
+        # Store the proficiency level
         user_data[user_id]["proficiency_level"] = proficiency_level
         user_data[user_id]["current_state"] = "selecting_learning_mode"
         
-        # Create untranslated message
-        original_message = (
-            f"Based on your sample, your proficiency level in {target_lang} is: {proficiency_level}.\n\n"
-            f"Please select a learning mode:"
-        )
+        # Prepare the result message
+        original_message = f"""
+Assessment complete! Based on your answers, your proficiency level in {target_lang} is: {proficiency_level}.
+
+Analysis: {analysis}
+
+Focus areas: {', '.join(focus_areas) if focus_areas else 'General language skills'}
+
+Now, please select a learning mode:
+"""
         
         # ترجمه پیام به زبان کاربر
         translated_message = await translate_text(original_message, "en", native_lang_code)
@@ -484,50 +829,64 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             text=translated_message,
             reply_markup=reply_markup
         )
-    
-    elif current_state == "learning":
-        # Handle learning interaction
-        learning_mode = user_data[user_id]["learning_mode"]
-        target_lang_name = user_data[user_id]["target_language"]["name"]
-        native_lang_name = user_data[user_id]["native_language"]["name"]
-        native_lang_code = user_data[user_id]["native_language"]["code"]
-        proficiency = user_data[user_id]["proficiency_level"]
         
-        # Generate response based on user's message and learning mode
-        response = await generate_response(
-            message_text,
-            learning_mode,
-            target_lang_name,
-            native_lang_name,
-            native_lang_code,
-            proficiency
-        )
-        
-        await update.message.reply_text(response)
-
-async def assess_proficiency(text, language):
-    """Assess language proficiency using OpenAI."""
-    try:
-        # استفاده از API قدیمی OpenAI
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": f"You are a language proficiency assessor for {language}. Assess the following text and determine the proficiency level (Beginner, Intermediate, Advanced) based on grammar, vocabulary, and fluency. Only respond with one word: the level."},
-                {"role": "user", "content": text}
-            ]
-        )
-        level = response.choices[0].message['content'].strip()
-        # Normalize the response
-        if "beginner" in level.lower():
-            return "Beginner"
-        elif "intermediate" in level.lower():
-            return "Intermediate"
-        elif "advanced" in level.lower():
-            return "Advanced"
-        else:
-            return "Beginner"  # Default to beginner if unclear
     except Exception as e:
-        logger.error(f"Assessment error: {e}")
+        logger.error(f"Error analyzing assessment: {e}")
+        
+        # Fallback to a simpler assessment
+        proficiency_level = await simple_assess_proficiency(answers, target_lang)
+        user_data[user_id]["proficiency_level"] = proficiency_level
+        user_data[user_id]["current_state"] = "selecting_learning_mode"
+        
+        # Create simplified result message
+        original_message = f"""
+Assessment complete! Based on your answers, your proficiency level in {target_lang} is: {proficiency_level}.
+
+Now, please select a learning mode:
+"""
+        
+        # ترجمه پیام به زبان کاربر
+        translated_message = await translate_text(original_message, "en", native_lang_code)
+        
+        # Create learning mode selection keyboard with translated labels
+        mode_buttons = [
+            "Curriculum", "Vocabulary Practice", "Useful Phrases", "Conversation Practice"
+        ]
+        
+        # ترجمه دکمه‌ها
+        translated_buttons = await translate_buttons(mode_buttons, "en", native_lang_code)
+        
+        keyboard = [
+            [InlineKeyboardButton(translated_buttons[0], callback_data="mode_curriculum")],
+            [InlineKeyboardButton(translated_buttons[1], callback_data="mode_vocabulary")],
+            [InlineKeyboardButton(translated_buttons[2], callback_data="mode_phrases")],
+            [InlineKeyboardButton(translated_buttons[3], callback_data="mode_conversation")]
+        ]
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            text=translated_message,
+            reply_markup=reply_markup
+        )
+
+async def simple_assess_proficiency(answers, language):
+    """Simple assessment based on answer length and complexity."""
+    try:
+        # For simplicity, we'll use the average answer length as a basic heuristic
+        # This is a fallback and not a proper assessment
+        total_length = sum(len(answer) for answer in answers)
+        avg_length = total_length / len(answers) if answers else 0
+        
+        # Very simple heuristic based on average answer length
+        if avg_length < 10:
+            return "Beginner"
+        elif avg_length < 30:
+            return "Intermediate"
+        else:
+            return "Advanced"
+    except Exception as e:
+        logger.error(f"Error in simple assessment: {e}")
         return "Beginner"  # Default to beginner on error
 
 async def generate_learning_content(mode, target_lang, native_lang, proficiency, native_lang_code):
@@ -626,7 +985,12 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "native_language": {"code": native_lang_code, "name": native_lang_name} if native_lang_code else None,
             "target_language": None,
             "proficiency_level": None,
-            "current_state": "selecting_target_language" if native_lang_code else "selecting_native_language"
+            "current_state": "selecting_target_language" if native_lang_code else "selecting_native_language",
+            "assessment": {
+                "questions": [],
+                "answers": [],
+                "current_question": 0
+            }
         }
         
         if native_lang_code:
@@ -732,7 +1096,7 @@ def preload_common_translations():
             "Please select your native language:",
             "Great! You've selected English as your native language. Now, please select the language you want to learn:",
             "Please select the language you want to learn:",
-            "Excellent! You've chosen to learn English. Now, let's assess your current proficiency level. Please write a few sentences in English so I can evaluate your level.",
+            "Excellent! You've chosen to learn English. Now, I'm going to ask you 10 questions to assess your current proficiency level.",
             "Based on your sample, your proficiency level in English is: Beginner.\n\nPlease select a learning mode:",
             "Curriculum",
             "Vocabulary Practice",
