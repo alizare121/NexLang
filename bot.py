@@ -1,6 +1,7 @@
 import os
 import logging
 import json
+import re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 import openai  # استفاده از openai به روش قدیمی
@@ -111,6 +112,9 @@ LANGUAGES = {
 # تعداد سوالات ارزیابی
 ASSESSMENT_QUESTIONS_COUNT = 10
 
+# تعداد روزهای برنامه درسی
+CURRICULUM_DAYS = 5
+
 # User data storage (in a real application, use a database)
 user_data = {}
 
@@ -217,6 +221,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "questions": [],
             "answers": [],
             "current_question": 0
+        },
+        "curriculum": {
+            "overview": "",
+            "days": {},
+            "current_day": 0
         }
     }
     
@@ -492,28 +501,222 @@ Are you ready to start the assessment?
         # Prepare response based on selected mode
         if mode == "curriculum":
             original_response = f"Here's a personalized curriculum for your {proficiency} level in {target_lang_name}."
+            
+            # ترجمه پاسخ به زبان کاربر
+            translated_response = await translate_text(original_response, "en", native_lang_code)
+            
+            # Generate curriculum overview
+            curriculum_overview = await generate_curriculum_overview(
+                target_lang_name,
+                user_data[user_id]["native_language"]["name"],
+                proficiency,
+                native_lang_code
+            )
+            
+            # Store the curriculum overview
+            user_data[user_id]["curriculum"]["overview"] = curriculum_overview
+            user_data[user_id]["current_state"] = "curriculum_overview"
+            
+            # Create buttons for starting day 1
+            start_day_text = await translate_text("Start Day 1", "en", native_lang_code)
+            back_text = await translate_text("Back to Menu", "en", native_lang_code)
+            
+            keyboard = [
+                [InlineKeyboardButton(start_day_text, callback_data="curriculum_day_1")],
+                [InlineKeyboardButton(back_text, callback_data="back_to_modes")]
+            ]
+            
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(
+                text=f"{translated_response}\n\n{curriculum_overview}",
+                reply_markup=reply_markup
+            )
+            
         elif mode == "vocabulary":
             original_response = f"Let's practice some vocabulary appropriate for your {proficiency} level in {target_lang_name}."
+            # ترجمه پاسخ به زبان کاربر
+            translated_response = await translate_text(original_response, "en", native_lang_code)
+            
+            # Generate learning content based on mode
+            learning_content = await generate_learning_content(
+                mode, 
+                target_lang_name,
+                user_data[user_id]["native_language"]["name"],
+                proficiency,
+                native_lang_code
+            )
+            
+            await query.edit_message_text(
+                text=f"{translated_response}\n\n{learning_content}"
+            )
+            
         elif mode == "phrases":
             original_response = f"Let's learn some useful phrases in {target_lang_name} for your {proficiency} level."
+            # ترجمه پاسخ به زبان کاربر
+            translated_response = await translate_text(original_response, "en", native_lang_code)
+            
+            # Generate learning content based on mode
+            learning_content = await generate_learning_content(
+                mode, 
+                target_lang_name,
+                user_data[user_id]["native_language"]["name"],
+                proficiency,
+                native_lang_code
+            )
+            
+            await query.edit_message_text(
+                text=f"{translated_response}\n\n{learning_content}"
+            )
+            
         elif mode == "conversation":
             original_response = f"Let's practice conversation in {target_lang_name}. I'll help you with dialogue practice."
+            # ترجمه پاسخ به زبان کاربر
+            translated_response = await translate_text(original_response, "en", native_lang_code)
+            
+            # Generate learning content based on mode
+            learning_content = await generate_learning_content(
+                mode, 
+                target_lang_name,
+                user_data[user_id]["native_language"]["name"],
+                proficiency,
+                native_lang_code
+            )
+            
+            await query.edit_message_text(
+                text=f"{translated_response}\n\n{learning_content}"
+            )
+    
+    elif callback_data == "back_to_modes":
+        # Go back to learning mode selection
+        native_lang_code = user_data[user_id]["native_language"]["code"]
+        user_data[user_id]["current_state"] = "selecting_learning_mode"
         
-        # ترجمه پاسخ به زبان کاربر
-        translated_response = await translate_text(original_response, "en", native_lang_code)
+        # Create learning mode selection keyboard with translated labels
+        mode_buttons = [
+            "Curriculum", "Vocabulary Practice", "Useful Phrases", "Conversation Practice"
+        ]
         
-        # Generate learning content based on mode
-        learning_content = await generate_learning_content(
-            mode, 
-            target_lang_name,
-            user_data[user_id]["native_language"]["name"],
-            proficiency,
-            native_lang_code  # Pass native language code for translation
-        )
+        # ترجمه دکمه‌ها
+        translated_buttons = await translate_buttons(mode_buttons, "en", native_lang_code)
+        
+        # Show learning mode options
+        original_learning_prompt = f"Please select a learning mode:"
+        translated_learning_prompt = await translate_text(original_learning_prompt, "en", native_lang_code)
+        
+        keyboard = [
+            [InlineKeyboardButton(translated_buttons[0], callback_data="mode_curriculum")],
+            [InlineKeyboardButton(translated_buttons[1], callback_data="mode_vocabulary")],
+            [InlineKeyboardButton(translated_buttons[2], callback_data="mode_phrases")],
+            [InlineKeyboardButton(translated_buttons[3], callback_data="mode_conversation")]
+        ]
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.edit_message_text(
-            text=f"{translated_response}\n\n{learning_content}"
+            text=translated_learning_prompt,
+            reply_markup=reply_markup
         )
+    
+    elif callback_data.startswith("curriculum_day_"):
+        # Handle curriculum day selection
+        day_number = int(callback_data.split("_")[-1])
+        
+        if day_number > CURRICULUM_DAYS:
+            # If we've gone beyond the curriculum days, go back to overview
+            day_number = 0
+        
+        user_data[user_id]["curriculum"]["current_day"] = day_number
+        native_lang_code = user_data[user_id]["native_language"]["code"]
+        target_lang_name = user_data[user_id]["target_language"]["name"]
+        proficiency = user_data[user_id]["proficiency_level"]
+        
+        if day_number == 0:
+            # Show curriculum overview
+            original_response = f"Here's a personalized curriculum for your {proficiency} level in {target_lang_name}."
+            translated_response = await translate_text(original_response, "en", native_lang_code)
+            
+            curriculum_overview = user_data[user_id]["curriculum"]["overview"]
+            
+            # Create buttons for starting day 1
+            start_day_text = await translate_text("Start Day 1", "en", native_lang_code)
+            back_text = await translate_text("Back to Menu", "en", native_lang_code)
+            
+            keyboard = [
+                [InlineKeyboardButton(start_day_text, callback_data="curriculum_day_1")],
+                [InlineKeyboardButton(back_text, callback_data="back_to_modes")]
+            ]
+            
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(
+                text=f"{translated_response}\n\n{curriculum_overview}",
+                reply_markup=reply_markup
+            )
+            
+        else:
+            # Show specific day content
+            user_data[user_id]["current_state"] = f"curriculum_day_{day_number}"
+            
+            # Check if we already have content for this day
+            if day_number in user_data[user_id]["curriculum"]["days"]:
+                day_content = user_data[user_id]["curriculum"]["days"][day_number]
+            else:
+                # Generate content for this day
+                day_content = await generate_curriculum_day(
+                    day_number,
+                    target_lang_name,
+                    user_data[user_id]["native_language"]["name"],
+                    proficiency,
+                    native_lang_code
+                )
+                # Store the day content
+                user_data[user_id]["curriculum"]["days"][day_number] = day_content
+            
+            # Create navigation buttons
+            button_texts = []
+            
+            if day_number > 1:
+                prev_day_text = await translate_text(f"← Day {day_number-1}", "en", native_lang_code)
+                button_texts.append((prev_day_text, f"curriculum_day_{day_number-1}"))
+            
+            overview_text = await translate_text("Overview", "en", native_lang_code)
+            button_texts.append((overview_text, "curriculum_day_0"))
+            
+            if day_number < CURRICULUM_DAYS:
+                next_day_text = await translate_text(f"Day {day_number+1} →", "en", native_lang_code)
+                button_texts.append((next_day_text, f"curriculum_day_{day_number+1}"))
+            
+            # Create keyboard with navigation buttons
+            keyboard = []
+            row = []
+            
+            for text, callback in button_texts:
+                row.append(InlineKeyboardButton(text, callback_data=callback))
+                
+                # Create a new row after 2 buttons
+                if len(row) == 2:
+                    keyboard.append(row)
+                    row = []
+            
+            # Add any remaining buttons
+            if row:
+                keyboard.append(row)
+            
+            # Add back to menu button
+            back_text = await translate_text("Back to Menu", "en", native_lang_code)
+            keyboard.append([InlineKeyboardButton(back_text, callback_data="back_to_modes")])
+            
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            # Create day header
+            day_header = f"Day {day_number} of {CURRICULUM_DAYS}"
+            translated_day_header = await translate_text(day_header, "en", native_lang_code)
+            
+            await query.edit_message_text(
+                text=f"📚 {translated_day_header} 📚\n\n{day_content}",
+                reply_markup=reply_markup
+            )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle user messages."""
@@ -542,7 +745,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             # Assessment complete, evaluate proficiency
             await complete_assessment(update, context, user_id)
     
-    elif current_state == "learning":
+    elif current_state == "learning" or current_state.startswith("curriculum_day_"):
         # Handle learning interaction
         learning_mode = user_data[user_id]["learning_mode"]
         target_lang_name = user_data[user_id]["target_language"]["name"]
@@ -550,15 +753,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         native_lang_code = user_data[user_id]["native_language"]["code"]
         proficiency = user_data[user_id]["proficiency_level"]
         
-        # Generate response based on user's message and learning mode
-        response = await generate_response(
-            message_text,
-            learning_mode,
-            target_lang_name,
-            native_lang_name,
-            native_lang_code,
-            proficiency
-        )
+        # If in curriculum day mode, adjust the response to be relevant to the current day
+        if current_state.startswith("curriculum_day_"):
+            day_number = int(current_state.split("_")[-1])
+            
+            # Generate response based on user's message and current day
+            response = await generate_curriculum_response(
+                message_text,
+                day_number,
+                target_lang_name,
+                native_lang_name,
+                native_lang_code,
+                proficiency
+            )
+        else:
+            # Generate response based on user's message and learning mode
+            response = await generate_response(
+                message_text,
+                learning_mode,
+                target_lang_name,
+                native_lang_name,
+                native_lang_code,
+                proficiency
+            )
         
         await update.message.reply_text(response)
 
@@ -889,6 +1106,127 @@ async def simple_assess_proficiency(answers, language):
         logger.error(f"Error in simple assessment: {e}")
         return "Beginner"  # Default to beginner on error
 
+async def generate_curriculum_overview(target_lang, native_lang, proficiency, native_lang_code):
+    """Generate a 5-day curriculum overview."""
+    try:
+        # استفاده از API قدیمی OpenAI
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {
+                    "role": "system", 
+                    "content": f"""
+                    You are a language curriculum designer. Create a 5-day curriculum for {proficiency} level students learning {target_lang} from {native_lang}.
+                    
+                    For each day, provide:
+                    1. A brief title/theme for the day
+                    2. A short description of what will be covered (1-2 sentences)
+                    
+                    Format your response as a clear, organized curriculum overview. Write in {native_lang}.
+                    Keep it concise but informative. Do not include detailed lessons yet.
+                    """
+                },
+                {
+                    "role": "user", 
+                    "content": f"Create a 5-day curriculum for {proficiency} level {target_lang} learners who speak {native_lang}."
+                }
+            ]
+        )
+        
+        curriculum_overview = response.choices[0].message['content']
+        return curriculum_overview
+        
+    except Exception as e:
+        logger.error(f"Error generating curriculum overview: {e}")
+        
+        # ترجمه پیام خطا به زبان کاربر
+        error_message = "Sorry, I couldn't generate a curriculum at this time. Please try again later."
+        translated_error = await translate_text(error_message, "en", native_lang_code)
+        
+        return translated_error
+
+async def generate_curriculum_day(day_number, target_lang, native_lang, proficiency, native_lang_code):
+    """Generate detailed content for a specific day in the curriculum."""
+    try:
+        # استفاده از API قدیمی OpenAI
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {
+                    "role": "system", 
+                    "content": f"""
+                    You are a language teacher creating detailed lesson content for Day {day_number} of a 5-day curriculum for {proficiency} level students learning {target_lang} from {native_lang}.
+                    
+                    Create a comprehensive lesson that includes:
+                    1. Vocabulary (5-10 words/phrases with translations and examples)
+                    2. Grammar point(s) appropriate for {proficiency} level
+                    3. Practice exercises or activities
+                    4. Cultural notes or interesting facts
+                    5. Homework or self-study suggestions
+                    
+                    Format your response in a clear, organized way with sections and examples.
+                    Write in {native_lang}, with {target_lang} examples where appropriate.
+                    Make it engaging and educational.
+                    """
+                },
+                {
+                    "role": "user", 
+                    "content": f"Create detailed lesson content for Day {day_number} of a 5-day curriculum for {proficiency} level {target_lang} learners who speak {native_lang}."
+                }
+            ]
+        )
+        
+        day_content = response.choices[0].message['content']
+        return day_content
+        
+    except Exception as e:
+        logger.error(f"Error generating curriculum day content: {e}")
+        
+        # ترجمه پیام خطا به زبان کاربر
+        error_message = f"Sorry, I couldn't generate content for Day {day_number} at this time. Please try again later."
+        translated_error = await translate_text(error_message, "en", native_lang_code)
+        
+        return translated_error
+
+async def generate_curriculum_response(user_message, day_number, target_lang, native_lang, native_lang_code, proficiency):
+    """Generate a response to the user's message in the context of the current curriculum day."""
+    try:
+        # استفاده از API قدیمی OpenAI
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {
+                    "role": "system", 
+                    "content": f"""
+                    You are a language teacher helping a {proficiency} level student with Day {day_number} of their {target_lang} curriculum.
+                    
+                    Respond to their question or comment in a helpful, educational way.
+                    If they ask about vocabulary, grammar, or exercises from Day {day_number}, provide detailed explanations.
+                    If they share their work or practice, provide constructive feedback and corrections.
+                    If they ask about something unrelated to the current day's lesson, gently guide them back to the topic.
+                    
+                    Write your response in {native_lang}, with {target_lang} examples where appropriate.
+                    Be encouraging and supportive.
+                    """
+                },
+                {
+                    "role": "user", 
+                    "content": user_message
+                }
+            ]
+        )
+        
+        return response.choices[0].message['content']
+        
+    except Exception as e:
+        logger.error(f"Error generating curriculum response: {e}")
+        
+        # ترجمه پیام خطا به زبان کاربر
+        error_message = "Sorry, I couldn't generate a response at this time. Please try again later."
+        translated_error = await translate_text(error_message, "en", native_lang_code)
+        
+        return translated_error
+
 async def generate_learning_content(mode, target_lang, native_lang, proficiency, native_lang_code):
     """Generate learning content based on mode and proficiency."""
     prompts = {
@@ -990,6 +1328,11 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 "questions": [],
                 "answers": [],
                 "current_question": 0
+            },
+            "curriculum": {
+                "overview": "",
+                "days": {},
+                "current_day": 0
             }
         }
         
