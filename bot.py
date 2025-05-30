@@ -203,7 +203,7 @@ async def translate_text(text, source_lang, target_lang):
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a professional translator. Provide only the translation, no explanations or additional text."},
+                {"role": "system", "content": f"You are a professional translator. Translate from {source_lang_name} to {target_lang_name}. Provide ONLY the translated text, no explanations or additional text."},
                 {"role": "user", "content": prompt}
             ]
         )
@@ -1367,8 +1367,8 @@ async def generate_voice_feedback(transcription, target_lang, native_lang_code, 
         
         feedback = response.choices[0].message['content']
         
-        # Translate feedback to user's native language if needed
-        translated_feedback = await translate_text(feedback, "en", native_lang_code)
+        # The feedback is already generated in the user's native language, no need to translate
+        translated_feedback = feedback
         
         return translated_feedback
         
@@ -1414,10 +1414,10 @@ async def generate_pronunciation_instructions(target_lang, native_lang, proficie
         
         instructions = response.choices[0].message['content']
         
-        # Add voice message instructions
+        # Add voice message instructions - this will be included in the main instructions
         voice_instructions = "\n\n🎤 **How to Practice**: Record voice messages pronouncing these words and phrases, and I'll give you feedback on your pronunciation!"
         translated_voice_instructions = await translate_text(voice_instructions, "en", native_lang_code)
-        
+
         return instructions + translated_voice_instructions
         
     except Exception as e:
@@ -1448,17 +1448,20 @@ You are a personalized language learning assistant. Here's the user's profile:
 - Current Learning Mode: {learning_mode}
 - Assessment Completed: {user_profile["assessment"].get("completed", False)}
 
+IMPORTANT: Respond ONLY in {native_lang_name}. All explanations, instructions, and feedback should be in {native_lang_name}.
+When providing examples in {target_lang_name}, always include the translation to {native_lang_name}.
+
 Respond to their question or message in a helpful, educational way that's appropriate for their level.
-Always provide explanations in {native_lang_name}, with examples in {target_lang_name} when relevant.
 Be encouraging and supportive.
 If they ask about grammar, vocabulary, or language concepts, provide clear explanations with examples.
 If they practice in {target_lang_name}, provide constructive feedback and corrections.
 
 Remember to:
-1. Match your response complexity to their proficiency level
-2. Provide translations when helpful
-3. Encourage continued learning
-4. Suggest related practice activities when appropriate
+1. Write everything in {native_lang_name}
+2. Match your response complexity to their proficiency level
+3. Provide translations when helpful
+4. Encourage continued learning
+5. Suggest related practice activities when appropriate
 """
         
         # استفاده از API قدیمی OpenAI
