@@ -147,13 +147,13 @@ async def translate_text(text, source_lang, target_lang):
     """Translate text using cache first, then OpenAI."""
     if source_lang == target_lang:
         return text
-    
+
     # Check if we have this translation in cache
     cached_translation = translation_cache.get_translation(text, source_lang, target_lang)
     if cached_translation:
         logger.info(f"Using cached translation for {source_lang} -> {target_lang}")
         return cached_translation
-    
+
     try:
         # برای اطمینان از عملکرد صحیح، کد زبان را به نام کامل تبدیل می‌کنیم
         language_names = {
@@ -185,31 +185,30 @@ async def translate_text(text, source_lang, target_lang):
             "th": "Thai",
             "vi": "Vietnamese",
             "id": "Indonesian"
+            # می‌توانید زبان‌های بیشتری اضافه کنید
         }
         
         source_lang_name = language_names.get(source_lang, source_lang)
         target_lang_name = language_names.get(target_lang, target_lang)
         
+        # استفاده از پرامپت واضح‌تر برای ترجمه
+        prompt = f"""
+        Translate the following text from {source_lang_name} to {target_lang_name}.
+        Return ONLY the translated text, nothing else.
+        
+        Text to translate: {text}
+        """
+        
         # استفاده از API قدیمی OpenAI
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
-                {
-                    "role": "system", 
-                    "content": f"You are a professional translator. You MUST translate from {source_lang_name} to {target_lang_name}. Return ONLY the translated text in {target_lang_name}, absolutely nothing else. Do not add explanations, notes, or any additional text."
-                },
-                {
-                    "role": "user", 
-                    "content": f"Translate this text to {target_lang_name}: {text}"
-                }
+                {"role": "system", "content": "You are a professional translator. Provide only the translation, no explanations or additional text."},
+                {"role": "user", "content": prompt}
             ]
         )
         
         translated_text = response.choices[0].message['content'].strip()
-        
-        # Remove any quotes or extra formatting
-        translated_text = translated_text.strip('"').strip("'").strip()
-        
         logger.info(f"Translated from {source_lang} to {target_lang}: {text} -> {translated_text}")
         
         # Add successful translation to cache
@@ -223,23 +222,23 @@ async def translate_text(text, source_lang, target_lang):
 async def translate_buttons(buttons, source_lang, target_lang):
     """Translate a list of button labels."""
     translated_buttons = []
-    
+
     for button in buttons:
         try:
             translated_button = await translate_text(button, source_lang, target_lang)
             translated_buttons.append(translated_button)
         except:
             translated_buttons.append(button)
-    
+
     return translated_buttons
 
 async def create_main_menu(user_id):
     """Create the main menu with all available options."""
     if user_id not in user_data:
         return None
-    
+
     native_lang_code = user_data[user_id].get("native_language", {}).get("code", "en")
-    
+
     # Menu options
     menu_options = [
         ("🏠 Main Menu", "main_menu"),
@@ -249,7 +248,7 @@ async def create_main_menu(user_id):
         ("📈 My Progress", "my_progress"),
         ("❓ Help", "help_menu")
     ]
-    
+
     # Translate menu options
     translated_options = []
     for text, callback in menu_options:
@@ -259,7 +258,7 @@ async def create_main_menu(user_id):
         
         translated_text = await translate_text(text_part, "en", native_lang_code)
         translated_options.append((f"{emoji} {translated_text}", callback))
-    
+
     # Create keyboard
     keyboard = []
     for i in range(0, len(translated_options), 2):
@@ -268,16 +267,16 @@ async def create_main_menu(user_id):
         if i + 1 < len(translated_options):
             row.append(InlineKeyboardButton(translated_options[i+1][0], callback_data=translated_options[i+1][1]))
         keyboard.append(row)
-    
+
     return InlineKeyboardMarkup(keyboard)
 
 async def create_learning_modes_menu(user_id):
     """Create learning modes menu."""
     if user_id not in user_data:
         return None
-    
+
     native_lang_code = user_data[user_id].get("native_language", {}).get("code", "en")
-    
+
     # Learning mode options
     mode_options = [
         ("📚 Curriculum", "mode_curriculum"),
@@ -286,7 +285,7 @@ async def create_learning_modes_menu(user_id):
         ("🗣️ Conversation Practice", "mode_conversation"),
         ("🎤 Pronunciation Practice", "mode_pronunciation")  # اضافه کردن گزینه تمرین تلفظ
     ]
-    
+
     # Translate options
     translated_options = []
     for text, callback in mode_options:
@@ -296,25 +295,25 @@ async def create_learning_modes_menu(user_id):
         
         translated_text = await translate_text(text_part, "en", native_lang_code)
         translated_options.append((f"{emoji} {translated_text}", callback))
-    
+
     # Create keyboard
     keyboard = []
     for text, callback in translated_options:
         keyboard.append([InlineKeyboardButton(text, callback_data=callback)])
-    
+
     # Add back button
     back_text = await translate_text("🔙 Back to Main Menu", "en", native_lang_code)
     keyboard.append([InlineKeyboardButton(back_text, callback_data="main_menu")])
-    
+
     return InlineKeyboardMarkup(keyboard)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a welcome message when the command /start is issued."""
     user_id = update.effective_user.id
-    
+
     # Try to load existing user data
     data_loaded = await load_user_data(user_id)
-    
+
     if not data_loaded:
         # Initialize new user data
         user_data[user_id] = {
@@ -339,7 +338,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "preferences": {},
             "voice_interactions": []  # اضافه کردن آرایه برای ذخیره تعاملات صوتی
         }
-    
+
     # If user already has languages set, show main menu
     if (user_data[user_id].get("native_language") and 
         user_data[user_id].get("target_language")):
@@ -362,13 +361,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             reply_markup=main_menu
         )
         return
-    
+
     # Create language selection keyboard with pagination
     languages_list = list(LANGUAGES.keys())
     keyboards = []
     current_keyboard = []
     row = []
-    
+
     # Create rows with 3 languages each
     for i, lang in enumerate(languages_list):
         row.append(InlineKeyboardButton(lang, callback_data=f"native_{LANGUAGES[lang]}_{lang}"))
@@ -383,13 +382,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 row = []
             keyboards.append(current_keyboard)
             current_keyboard = []
-    
+
     # Add any remaining rows and keyboards
     if row:
         current_keyboard.append(row)
     if current_keyboard:
         keyboards.append(current_keyboard)
-    
+
     # Add navigation buttons for pagination
     if len(keyboards) > 1:
         for i, keyboard in enumerate(keyboards):
@@ -399,15 +398,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             if i < len(keyboards) - 1:
                 nav_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"page_{i+1}"))
             keyboard.append(nav_row)
-    
+
     # Store keyboards in user data for pagination
     user_data[user_id]["language_keyboards"] = keyboards
     user_data[user_id]["current_page"] = 0
-    
+
     reply_markup = InlineKeyboardMarkup(keyboards[0])
-    
+
     welcome_message = "Welcome to the Language Learning Bot! 🌍\n\nPlease select your native language:"
-    
+
     await update.message.reply_text(
         welcome_message,
         reply_markup=reply_markup
@@ -1211,6 +1210,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
             await update.message.reply_text(response + translated_menu_suggestion)
 
+# اضافه کردن توابع مربوط به پیام‌های صوتی
 async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle voice messages from users."""
     user_id = update.effective_user.id
@@ -1363,15 +1363,13 @@ async def generate_voice_feedback(transcription, target_lang, native_lang_code, 
                     You are a language teacher providing feedback on a student's speaking practice.
                     The student is at {proficiency} level in {target_lang}.
                     
-                    IMPORTANT: You MUST write your entire response in {native_lang_name} language only.
-                    
                     Analyze the transcription of their speech and provide:
                     1. Positive feedback on what they did well
                     2. Corrections for any grammar or vocabulary errors
                     3. Pronunciation tips (based on common issues for speakers of their level)
                     4. A suggestion for how they can improve
                     
-                    Be encouraging and supportive. Write everything in {native_lang_name}.
+                    Be encouraging and supportive. Write your response in their native language.
                     """
                 },
                 {
@@ -1383,8 +1381,10 @@ async def generate_voice_feedback(transcription, target_lang, native_lang_code, 
         
         feedback = response.choices[0].message['content']
         
-        # The feedback should already be in the native language, but let's make sure
-        return feedback
+        # Translate feedback to user's native language if needed
+        translated_feedback = await translate_text(feedback, "en", native_lang_code)
+        
+        return translated_feedback
         
     except Exception as e:
         logger.error(f"Error generating voice feedback: {e}")
@@ -1428,10 +1428,10 @@ async def generate_pronunciation_instructions(target_lang, native_lang, proficie
         
         instructions = response.choices[0].message['content']
         
-        # Add voice message instructions - this will be included in the main instructions
+        # Add voice message instructions
         voice_instructions = "\n\n🎤 **How to Practice**: Record voice messages pronouncing these words and phrases, and I'll give you feedback on your pronunciation!"
         translated_voice_instructions = await translate_text(voice_instructions, "en", native_lang_code)
-
+        
         return instructions + translated_voice_instructions
         
     except Exception as e:
@@ -1439,63 +1439,6 @@ async def generate_pronunciation_instructions(target_lang, native_lang, proficie
         
         # ترجمه پیام خطا به زبان کاربر
         error_message = "Sorry, I couldn't generate pronunciation instructions at this time. Please try again later."
-        translated_error = await translate_text(error_message, "en", native_lang_code)
-        
-        return translated_error
-
-async def generate_personalized_response(user_message, user_profile):
-    """Generate a personalized response based on user's profile and message."""
-    try:
-        native_lang_code = user_profile["native_language"]["code"]
-        native_lang_name = user_profile["native_language"]["name"]
-        target_lang_name = user_profile["target_language"]["name"]
-        proficiency = user_profile.get("proficiency_level", "Beginner")
-        learning_mode = user_profile.get("learning_mode", "general")
-        
-        # Create a comprehensive prompt based on user's profile
-        system_prompt = f"""
-You are a personalized language learning assistant. Here's the user's profile:
-
-- Native Language: {native_lang_name}
-- Learning: {target_lang_name}
-- Proficiency Level: {proficiency}
-- Current Learning Mode: {learning_mode}
-- Assessment Completed: {user_profile["assessment"].get("completed", False)}
-
-CRITICAL INSTRUCTION: You MUST respond ENTIRELY in {native_lang_name}. Every single word of your response must be in {native_lang_name}.
-
-When providing examples in {target_lang_name}, format them like this:
-Example in {target_lang_name}: "example text" (translation in {native_lang_name})
-
-Respond to their question or message in a helpful, educational way that's appropriate for their level.
-Be encouraging and supportive.
-If they ask about grammar, vocabulary, or language concepts, provide clear explanations with examples.
-If they practice in {target_lang_name}, provide constructive feedback and corrections.
-
-Remember:
-1. Write EVERYTHING in {native_lang_name}
-2. Match your response complexity to their proficiency level
-3. Provide translations when helpful
-4. Encourage continued learning
-5. Suggest related practice activities when appropriate
-"""
-        
-        # استفاده از API قدیمی OpenAI
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message}
-            ]
-        )
-        
-        return response.choices[0].message['content']
-        
-    except Exception as e:
-        logger.error(f"Error generating personalized response: {e}")
-        
-        # Fallback response
-        error_message = "I'm here to help you learn! Feel free to ask me any questions about grammar, vocabulary, or language learning tips."
         translated_error = await translate_text(error_message, "en", native_lang_code)
         
         return translated_error
@@ -1871,13 +1814,11 @@ async def generate_curriculum_overview(target_lang, native_lang, proficiency, na
                     "content": f"""
                     You are a language curriculum designer. Create a 5-day curriculum for {proficiency} level students learning {target_lang} from {native_lang}.
                     
-                    IMPORTANT: Write your ENTIRE response in {native_lang} language only.
-                    
                     For each day, provide:
                     1. A brief title/theme for the day
                     2. A short description of what will be covered (1-2 sentences)
                     
-                    Format your response as a clear, organized curriculum overview.
+                    Format your response as a clear, organized curriculum overview. Write in {native_lang}.
                     Keep it concise but informative. Do not include detailed lessons yet.
                     """
                 },
@@ -2010,6 +1951,58 @@ async def generate_learning_content(mode, target_lang, native_lang, proficiency,
         
         # ترجمه پیام خطا به زبان کاربر
         error_message = "Sorry, I couldn't generate learning content at this time. Please try again later."
+        translated_error = await translate_text(error_message, "en", native_lang_code)
+        
+        return translated_error
+
+async def generate_personalized_response(user_message, user_profile):
+    """Generate a personalized response based on user's profile and message."""
+    try:
+        native_lang_code = user_profile["native_language"]["code"]
+        native_lang_name = user_profile["native_language"]["name"]
+        target_lang_name = user_profile["target_language"]["name"]
+        proficiency = user_profile.get("proficiency_level", "Beginner")
+        learning_mode = user_profile.get("learning_mode", "general")
+        
+        # Create a comprehensive prompt based on user's profile
+        system_prompt = f"""
+You are a personalized language learning assistant. Here's the user's profile:
+
+- Native Language: {native_lang_name}
+- Learning: {target_lang_name}
+- Proficiency Level: {proficiency}
+- Current Learning Mode: {learning_mode}
+- Assessment Completed: {user_profile["assessment"].get("completed", False)}
+
+Respond to their question or message in a helpful, educational way that's appropriate for their level.
+Always provide explanations in {native_lang_name}, with examples in {target_lang_name} when relevant.
+Be encouraging and supportive.
+If they ask about grammar, vocabulary, or language concepts, provide clear explanations with examples.
+If they practice in {target_lang_name}, provide constructive feedback and corrections.
+
+Remember to:
+1. Match your response complexity to their proficiency level
+2. Provide translations when helpful
+3. Encourage continued learning
+4. Suggest related practice activities when appropriate
+"""
+        
+        # استفاده از API قدیمی OpenAI
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ]
+        )
+        
+        return response.choices[0].message['content']
+        
+    except Exception as e:
+        logger.error(f"Error generating personalized response: {e}")
+        
+        # Fallback response
+        error_message = "I'm here to help you learn! Feel free to ask me any questions about grammar, vocabulary, or language learning tips."
         translated_error = await translate_text(error_message, "en", native_lang_code)
         
         return translated_error
