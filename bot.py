@@ -185,30 +185,31 @@ async def translate_text(text, source_lang, target_lang):
             "th": "Thai",
             "vi": "Vietnamese",
             "id": "Indonesian"
-            # می‌توانید زبان‌های بیشتری اضافه کنید
         }
         
         source_lang_name = language_names.get(source_lang, source_lang)
         target_lang_name = language_names.get(target_lang, target_lang)
         
-        # استفاده از پرامپت واضح‌تر برای ترجمه
-        prompt = f"""
-        Translate the following text from {source_lang_name} to {target_lang_name}.
-        Return ONLY the translated text, nothing else.
-        
-        Text to translate: {text}
-        """
-        
         # استفاده از API قدیمی OpenAI
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": f"You are a professional translator. Translate from {source_lang_name} to {target_lang_name}. Provide ONLY the translated text, no explanations or additional text."},
-                {"role": "user", "content": prompt}
+                {
+                    "role": "system", 
+                    "content": f"You are a professional translator. You MUST translate from {source_lang_name} to {target_lang_name}. Return ONLY the translated text in {target_lang_name}, absolutely nothing else. Do not add explanations, notes, or any additional text."
+                },
+                {
+                    "role": "user", 
+                    "content": f"Translate this text to {target_lang_name}: {text}"
+                }
             ]
         )
         
         translated_text = response.choices[0].message['content'].strip()
+        
+        # Remove any quotes or extra formatting
+        translated_text = translated_text.strip('"').strip("'").strip()
+        
         logger.info(f"Translated from {source_lang} to {target_lang}: {text} -> {translated_text}")
         
         # Add successful translation to cache
@@ -1339,6 +1340,19 @@ async def transcribe_audio(audio_file_path, language_code):
 async def generate_voice_feedback(transcription, target_lang, native_lang_code, proficiency):
     """Generate feedback on the user's voice message."""
     try:
+        # Get the native language name
+        language_names = {
+            "en": "English", "fa": "Persian", "es": "Spanish", "fr": "French", 
+            "de": "German", "it": "Italian", "pt": "Portuguese", "ru": "Russian",
+            "ja": "Japanese", "zh": "Chinese", "ar": "Arabic", "hi": "Hindi",
+            "tr": "Turkish", "ko": "Korean", "nl": "Dutch", "sv": "Swedish",
+            "no": "Norwegian", "da": "Danish", "fi": "Finnish", "pl": "Polish",
+            "uk": "Ukrainian", "cs": "Czech", "hu": "Hungarian", "el": "Greek",
+            "he": "Hebrew", "th": "Thai", "vi": "Vietnamese", "id": "Indonesian"
+        }
+        
+        native_lang_name = language_names.get(native_lang_code, "English")
+        
         # استفاده از API قدیمی OpenAI
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
@@ -1349,13 +1363,15 @@ async def generate_voice_feedback(transcription, target_lang, native_lang_code, 
                     You are a language teacher providing feedback on a student's speaking practice.
                     The student is at {proficiency} level in {target_lang}.
                     
+                    IMPORTANT: You MUST write your entire response in {native_lang_name} language only.
+                    
                     Analyze the transcription of their speech and provide:
                     1. Positive feedback on what they did well
                     2. Corrections for any grammar or vocabulary errors
                     3. Pronunciation tips (based on common issues for speakers of their level)
                     4. A suggestion for how they can improve
                     
-                    Be encouraging and supportive. Write your response in their native language.
+                    Be encouraging and supportive. Write everything in {native_lang_name}.
                     """
                 },
                 {
@@ -1367,10 +1383,8 @@ async def generate_voice_feedback(transcription, target_lang, native_lang_code, 
         
         feedback = response.choices[0].message['content']
         
-        # The feedback is already generated in the user's native language, no need to translate
-        translated_feedback = feedback
-        
-        return translated_feedback
+        # The feedback should already be in the native language, but let's make sure
+        return feedback
         
     except Exception as e:
         logger.error(f"Error generating voice feedback: {e}")
@@ -1448,16 +1462,18 @@ You are a personalized language learning assistant. Here's the user's profile:
 - Current Learning Mode: {learning_mode}
 - Assessment Completed: {user_profile["assessment"].get("completed", False)}
 
-IMPORTANT: Respond ONLY in {native_lang_name}. All explanations, instructions, and feedback should be in {native_lang_name}.
-When providing examples in {target_lang_name}, always include the translation to {native_lang_name}.
+CRITICAL INSTRUCTION: You MUST respond ENTIRELY in {native_lang_name}. Every single word of your response must be in {native_lang_name}.
+
+When providing examples in {target_lang_name}, format them like this:
+Example in {target_lang_name}: "example text" (translation in {native_lang_name})
 
 Respond to their question or message in a helpful, educational way that's appropriate for their level.
 Be encouraging and supportive.
 If they ask about grammar, vocabulary, or language concepts, provide clear explanations with examples.
 If they practice in {target_lang_name}, provide constructive feedback and corrections.
 
-Remember to:
-1. Write everything in {native_lang_name}
+Remember:
+1. Write EVERYTHING in {native_lang_name}
 2. Match your response complexity to their proficiency level
 3. Provide translations when helpful
 4. Encourage continued learning
@@ -1855,11 +1871,13 @@ async def generate_curriculum_overview(target_lang, native_lang, proficiency, na
                     "content": f"""
                     You are a language curriculum designer. Create a 5-day curriculum for {proficiency} level students learning {target_lang} from {native_lang}.
                     
+                    IMPORTANT: Write your ENTIRE response in {native_lang} language only.
+                    
                     For each day, provide:
                     1. A brief title/theme for the day
                     2. A short description of what will be covered (1-2 sentences)
                     
-                    Format your response as a clear, organized curriculum overview. Write in {native_lang}.
+                    Format your response as a clear, organized curriculum overview.
                     Keep it concise but informative. Do not include detailed lessons yet.
                     """
                 },
