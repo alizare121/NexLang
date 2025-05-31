@@ -145,13 +145,13 @@ async def translate_text(text, source_lang, target_lang):
     """Translate text using cache first, then OpenAI."""
     if source_lang == target_lang:
         return text
-
+    
     # Check if we have this translation in cache
     cached_translation = translation_cache.get_translation(text, source_lang, target_lang)
     if cached_translation:
         logger.info(f"Using cached translation for {source_lang} -> {target_lang}")
         return cached_translation
-
+    
     try:
         # برای اطمینان از عملکرد صحیح، کد زبان را به نام کامل تبدیل می‌کنیم
         language_names = {
@@ -220,23 +220,23 @@ async def translate_text(text, source_lang, target_lang):
 async def translate_buttons(buttons, source_lang, target_lang):
     """Translate a list of button labels."""
     translated_buttons = []
-
+    
     for button in buttons:
         try:
             translated_button = await translate_text(button, source_lang, target_lang)
             translated_buttons.append(translated_button)
         except:
             translated_buttons.append(button)
-
+    
     return translated_buttons
 
 async def create_main_menu(user_id):
     """Create the main menu with all available options."""
     if user_id not in user_data:
         return None
-
+    
     native_lang_code = user_data[user_id].get("native_language", {}).get("code", "en")
-
+    
     # Menu options
     menu_options = [
         ("🏠 Main Menu", "main_menu"),
@@ -246,7 +246,7 @@ async def create_main_menu(user_id):
         ("📈 My Progress", "my_progress"),
         ("❓ Help", "help_menu")
     ]
-
+    
     # Translate menu options
     translated_options = []
     for text, callback in menu_options:
@@ -256,7 +256,7 @@ async def create_main_menu(user_id):
         
         translated_text = await translate_text(text_part, "en", native_lang_code)
         translated_options.append((f"{emoji} {translated_text}", callback))
-
+    
     # Create keyboard
     keyboard = []
     for i in range(0, len(translated_options), 2):
@@ -265,16 +265,16 @@ async def create_main_menu(user_id):
         if i + 1 < len(translated_options):
             row.append(InlineKeyboardButton(translated_options[i+1][0], callback_data=translated_options[i+1][1]))
         keyboard.append(row)
-
+    
     return InlineKeyboardMarkup(keyboard)
 
 async def create_learning_modes_menu(user_id):
     """Create learning modes menu."""
     if user_id not in user_data:
         return None
-
+    
     native_lang_code = user_data[user_id].get("native_language", {}).get("code", "en")
-
+    
     # Learning mode options
     mode_options = [
         ("📚 Curriculum", "mode_curriculum"),
@@ -282,7 +282,7 @@ async def create_learning_modes_menu(user_id):
         ("💬 Useful Phrases", "mode_phrases"),
         ("🗣️ Conversation Practice", "mode_conversation")
     ]
-
+    
     # Translate options
     translated_options = []
     for text, callback in mode_options:
@@ -292,25 +292,25 @@ async def create_learning_modes_menu(user_id):
         
         translated_text = await translate_text(text_part, "en", native_lang_code)
         translated_options.append((f"{emoji} {translated_text}", callback))
-
+    
     # Create keyboard
     keyboard = []
     for text, callback in translated_options:
         keyboard.append([InlineKeyboardButton(text, callback_data=callback)])
-
+    
     # Add back button
     back_text = await translate_text("🔙 Back to Main Menu", "en", native_lang_code)
     keyboard.append([InlineKeyboardButton(back_text, callback_data="main_menu")])
-
+    
     return InlineKeyboardMarkup(keyboard)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a welcome message when the command /start is issued."""
     user_id = update.effective_user.id
-
+    
     # Try to load existing user data
     data_loaded = await load_user_data(user_id)
-
+    
     if not data_loaded:
         # Initialize new user data
         user_data[user_id] = {
@@ -332,10 +332,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 "completed_days": []
             },
             "learning_history": [],
-            "preferences": {},
-            "voice_interactions": []
+            "preferences": {}
         }
-
+    
     # If user already has languages set, show main menu
     if (user_data[user_id].get("native_language") and 
         user_data[user_id].get("target_language")):
@@ -357,13 +356,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             reply_markup=main_menu
         )
         return
-
+    
     # Create language selection keyboard with pagination
     languages_list = list(LANGUAGES.keys())
     keyboards = []
     current_keyboard = []
     row = []
-
+    
     # Create rows with 3 languages each
     for i, lang in enumerate(languages_list):
         row.append(InlineKeyboardButton(lang, callback_data=f"native_{LANGUAGES[lang]}_{lang}"))
@@ -378,13 +377,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 row = []
             keyboards.append(current_keyboard)
             current_keyboard = []
-
+    
     # Add any remaining rows and keyboards
     if row:
         current_keyboard.append(row)
     if current_keyboard:
         keyboards.append(current_keyboard)
-
+    
     # Add navigation buttons for pagination
     if len(keyboards) > 1:
         for i, keyboard in enumerate(keyboards):
@@ -394,15 +393,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             if i < len(keyboards) - 1:
                 nav_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"page_{i+1}"))
             keyboard.append(nav_row)
-
+    
     # Store keyboards in user data for pagination
     user_data[user_id]["language_keyboards"] = keyboards
     user_data[user_id]["current_page"] = 0
-
+    
     reply_markup = InlineKeyboardMarkup(keyboards[0])
-
+    
     welcome_message = "Welcome to the Language Learning Bot! 🌍\n\nPlease select your native language:"
-
+    
     await update.message.reply_text(
         welcome_message,
         reply_markup=reply_markup
@@ -412,14 +411,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     """Handle button callbacks."""
     query = update.callback_query
     await query.answer()
-
+    
     user_id = update.effective_user.id
     callback_data = query.data
-
+    
     # Load user data if not in memory
     if user_id not in user_data:
         await load_user_data(user_id)
-
+    
     # Handle main menu options
     if callback_data == "main_menu":
         native_lang_code = user_data[user_id]["native_language"]["code"]
@@ -439,7 +438,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             reply_markup=main_menu
         )
         return
-
+    
     elif callback_data == "learning_modes":
         native_lang_code = user_data[user_id]["native_language"]["code"]
         
@@ -453,7 +452,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             reply_markup=learning_menu
         )
         return
-
+    
     elif callback_data == "change_languages":
         # Reset language selection
         user_data[user_id]["current_state"] = "selecting_native_language"
@@ -501,7 +500,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             reply_markup=reply_markup
         )
         return
-
+    
     elif callback_data == "retake_assessment":
         # Reset assessment data
         user_data[user_id]["assessment"] = {
@@ -532,7 +531,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return
-
+    
     elif callback_data == "my_progress":
         native_lang_code = user_data[user_id]["native_language"]["code"]
         
@@ -547,7 +546,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return
-
+    
     elif callback_data == "help_menu":
         native_lang_code = user_data[user_id]["native_language"]["code"]
         
@@ -562,9 +561,9 @@ Help & Instructions 📖
 • Practice exercises
 
 📱 Commands:
-/start - Show main menu
-/help - Show this help message
-/reset - Reset your learning progress
+/start - Restart or show main menu
+/help - Show this help
+/reset - Reset all progress
 
 🎯 Use the menu buttons to navigate between different learning modes and features.
 
@@ -581,7 +580,7 @@ Help & Instructions 📖
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return
-
+    
     # Handle pagination
     if callback_data.startswith("page_"):
         page = int(callback_data.split("_")[1])
@@ -595,7 +594,7 @@ Help & Instructions 📖
             reply_markup=InlineKeyboardMarkup(keyboards[page])
         )
         return
-
+    
     if callback_data.startswith("native_"):
         # Handle native language selection
         _, lang_code, lang_name = callback_data.split("_", 2)
@@ -675,7 +674,7 @@ Help & Instructions 📖
             text=translated_message,
             reply_markup=reply_markup
         )
-
+    
     elif callback_data.startswith("target_page_"):
         # Handle target language pagination
         page = int(callback_data.split("_")[2])
@@ -735,7 +734,7 @@ Are you ready to start the assessment?
             text=translated_message,
             reply_markup=reply_markup
         )
-
+    
     elif callback_data == "assessment_start":
         # Start the assessment
         user_data[user_id]["current_state"] = "assessment_in_progress"
@@ -753,7 +752,7 @@ Are you ready to start the assessment?
         
         # Ask the first question
         await ask_next_assessment_question(update, context, user_id)
-
+    
     elif callback_data == "assessment_cancel":
         # Cancel the assessment and go to main menu
         native_lang = user_data[user_id]["native_language"]["code"]
@@ -829,7 +828,7 @@ Are you ready to start the assessment?
                 text=f"{translated_response}\n\n{curriculum_overview}",
                 reply_markup=reply_markup
             )
-        
+            
         else:
             # Handle other learning modes
             original_response = f"Let's practice {mode.replace('_', ' ')} for your {proficiency} level in {target_lang_name}."
@@ -859,7 +858,7 @@ Are you ready to start the assessment?
                 text=f"{translated_response}\n\n{learning_content}",
                 reply_markup=reply_markup
             )
-
+    
     elif callback_data.startswith("curriculum_day_"):
         # Handle curriculum day selection
         day_number = int(callback_data.split("_")[-1])
@@ -974,7 +973,7 @@ Are you ready to start the assessment?
                 text=f"📚 {translated_day_header} 📚\n\n{day_content}",
                 reply_markup=reply_markup
             )
-
+    
     elif callback_data == "curriculum_complete":
         # Handle curriculum completion
         await show_curriculum_completion_menu(update, context, user_id)
@@ -982,14 +981,14 @@ Are you ready to start the assessment?
 async def show_curriculum_completion_menu(update, context, user_id):
     """Show menu after curriculum completion."""
     native_lang_code = user_data[user_id]["native_language"]["code"]
-
+    
     # Mark curriculum as completed
     if user_data[user_id]["curriculum"]["current_day"] not in user_data[user_id]["curriculum"]["completed_days"]:
         user_data[user_id]["curriculum"]["completed_days"].append(user_data[user_id]["curriculum"]["current_day"])
-
+    
     # Save user data
     await save_user_data(user_id)
-
+    
     completion_msg = """
 🎉 Congratulations! You've completed the curriculum! 🎉
 
@@ -1001,16 +1000,16 @@ You can:
 • Practice more with vocabulary or conversation
 • Ask me any questions about what you've learned
 """
-
+    
     translated_msg = await translate_text(completion_msg, "en", native_lang_code)
-
+    
     # Create options menu
     vocab_text = await translate_text("📝 Vocabulary Practice", "en", native_lang_code)
     phrases_text = await translate_text("💬 Useful Phrases", "en", native_lang_code)
     conversation_text = await translate_text("🗣️ Conversation Practice", "en", native_lang_code)
     assessment_text = await translate_text("📊 Retake Assessment", "en", native_lang_code)
     main_menu_text = await translate_text("🏠 Main Menu", "en", native_lang_code)
-
+    
     keyboard = [
         [InlineKeyboardButton(vocab_text, callback_data="mode_vocabulary")],
         [InlineKeyboardButton(phrases_text, callback_data="mode_phrases")],
@@ -1018,9 +1017,9 @@ You can:
         [InlineKeyboardButton(assessment_text, callback_data="retake_assessment")],
         [InlineKeyboardButton(main_menu_text, callback_data="main_menu")]
     ]
-
+    
     reply_markup = InlineKeyboardMarkup(keyboard)
-
+    
     if update.callback_query:
         await update.callback_query.edit_message_text(
             text=translated_msg,
@@ -1036,11 +1035,11 @@ async def create_progress_summary(user_id):
     """Create a summary of user's learning progress."""
     if user_id not in user_data:
         return "No progress data available."
-
+    
     native_lang_code = user_data[user_id]["native_language"]["code"]
     target_lang_name = user_data[user_id]["target_language"]["name"]
     proficiency = user_data[user_id].get("proficiency_level", "Not assessed")
-
+    
     # Create progress summary
     progress_text = f"""
 📈 Your Learning Progress 📈
@@ -1051,110 +1050,166 @@ async def create_progress_summary(user_id):
 
 📖 Curriculum Progress:
 """
-
+    
     # Add curriculum progress
     completed_days = user_data[user_id]["curriculum"].get("completed_days", [])
     for day in range(1, CURRICULUM_DAYS + 1):
         status = "✅" if day in completed_days else "⭕"
         progress_text += f"{status} Day {day}\n"
-
+    
     # Add learning history if available
     learning_history = user_data[user_id].get("learning_history", [])
     if learning_history:
         progress_text += f"\n🕒 Recent Activity:\n"
         for activity in learning_history[-3:]:  # Show last 3 activities
             progress_text += f"• {activity}\n"
-
+    
     progress_text += f"\n💡 Keep practicing to improve your {target_lang_name} skills!"
-
+    
     # Translate to user's native language
     translated_progress = await translate_text(progress_text, "en", native_lang_code)
-
+    
     return translated_progress
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle user messages."""
     user_id = update.effective_user.id
-
+    message_text = update.message.text
+    
     # Load user data if not in memory
     if user_id not in user_data:
         await load_user_data(user_id)
-
+    
     # If user is not in our database, start the conversation
     if user_id not in user_data:
         await start(update, context)
         return
-
+    
     current_state = user_data[user_id]["current_state"]
-
-    # Handle text messages
-    if update.message.text:
-        message_text = update.message.text
+    
+    if current_state == "assessment_in_progress":
+        # Handle assessment question response
+        current_question = user_data[user_id]["assessment"]["current_question"]
         
-        if current_state == "assessment_in_progress":
-            # Handle assessment question response
-            current_question = user_data[user_id]["assessment"]["current_question"]
-            
-            # Store the answer
-            user_data[user_id]["assessment"]["answers"].append(message_text)
-            
-            # Save user data
-            await save_user_data(user_id)
-            
-            # Move to the next question or finish assessment
-            if current_question + 1 < len(user_data[user_id]["assessment"]["questions"]):
-                user_data[user_id]["assessment"]["current_question"] += 1
-                await ask_next_assessment_question(update, context, user_id)
-            else:
-                # Assessment complete, evaluate proficiency
-                await complete_assessment(update, context, user_id)
+        # Store the answer
+        user_data[user_id]["assessment"]["answers"].append(message_text)
         
+        # Save user data
+        await save_user_data(user_id)
+        
+        # Move to the next question or finish assessment
+        if current_question + 1 < len(user_data[user_id]["assessment"]["questions"]):
+            user_data[user_id]["assessment"]["current_question"] += 1
+            await ask_next_assessment_question(update, context, user_id)
         else:
-            # Handle general questions and learning interaction
-            learning_mode = user_data[user_id].get("learning_mode", "general")
-            target_lang_name = user_data[user_id]["target_language"]["name"]
-            native_lang_name = user_data[user_id]["native_language"]["name"]
-            native_lang_code = user_data[user_id]["native_language"]["code"]
-            proficiency = user_data[user_id].get("proficiency_level", "Beginner")
+            # Assessment complete, evaluate proficiency
+            await complete_assessment(update, context, user_id)
+    
+    else:
+        # Handle general questions and learning interaction
+        learning_mode = user_data[user_id].get("learning_mode", "general")
+        target_lang_name = user_data[user_id]["target_language"]["name"]
+        native_lang_name = user_data[user_id]["native_language"]["name"]
+        native_lang_code = user_data[user_id]["native_language"]["code"]
+        proficiency = user_data[user_id].get("proficiency_level", "Beginner")
+        
+        # Add to learning history
+        if "learning_history" not in user_data[user_id]:
+            user_data[user_id]["learning_history"] = []
+        
+        user_data[user_id]["learning_history"].append(f"Asked: {message_text[:50]}...")
+        
+        # Keep only last 10 activities
+        if len(user_data[user_id]["learning_history"]) > 10:
+            user_data[user_id]["learning_history"] = user_data[user_id]["learning_history"][-10:]
+        
+        # Save user data
+        await save_user_data(user_id)
+        
+        # Generate personalized response
+        if current_state.startswith("curriculum_day_"):
+            day_number = int(current_state.split("_")[-1])
             
-            # Add to learning history
-            if "learning_history" not in user_data[user_id]:
-                user_data[user_id]["learning_history"] = []
-            
-            user_data[user_id]["learning_history"].append(f"Asked: {message_text[:50]}...")
-            
-            # Keep only last 10 activities
-            if len(user_data[user_id]["learning_history"]) > 10:
-                user_data[user_id]["learning_history"] = user_data[user_id]["learning_history"][-10:]
-            
-            # Save user data
-            await save_user_data(user_id)
-            
-            # Generate personalized response
-            if current_state.startswith("curriculum_day_"):
-                day_number = int(current_state.split("_")[-1])
-                
-                # Generate response based on user's message and current day
-                response = await generate_curriculum_response(
-                    message_text,
-                    day_number,
-                    target_lang_name,
-                    native_lang_name,
-                    native_lang_code,
-                    proficiency
-                )
-            else:
-                # Generate general response based on user's profile
-                response = await generate_personalized_response(
-                    message_text,
-                    user_data[user_id]
-                )
-            
-            # Add menu suggestion
-            menu_suggestion = "\n\n💡 Use /start to access the main menu anytime!"
-            translated_menu_suggestion = await translate_text(menu_suggestion, "en", native_lang_code)
-            
-            await update.message.reply_text(response + translated_menu_suggestion)
+            # Generate response based on user's message and current day
+            response = await generate_curriculum_response(
+                message_text,
+                day_number,
+                target_lang_name,
+                native_lang_name,
+                native_lang_code,
+                proficiency
+            )
+        else:
+            # Generate general response based on user's profile
+            response = await generate_personalized_response(
+                message_text,
+                user_data[user_id]
+            )
+        
+        # Add menu suggestion
+        menu_suggestion = "\n\n💡 Use /start to access the main menu anytime!"
+        translated_menu_suggestion = await translate_text(menu_suggestion, "en", native_lang_code)
+        
+        await update.message.reply_text(response + translated_menu_suggestion)
+
+async def generate_personalized_response(user_message, user_profile):
+    """Generate a personalized response based on user's profile and message."""
+    try:
+        native_lang_code = user_profile["native_language"]["code"]
+        native_lang_name = user_profile["native_language"]["name"]
+        target_lang_name = user_profile["target_language"]["name"]
+        proficiency = user_profile.get("proficiency_level", "Beginner")
+        learning_mode = user_profile.get("learning_mode", "general")
+        
+        # Create a comprehensive prompt based on user's profile
+        system_prompt = f"""
+You are a personalized language learning assistant. Here's the user's profile:
+
+- Native Language: {native_lang_name}
+- Learning: {target_lang_name}
+- Proficiency Level: {proficiency}
+- Current Learning Mode: {learning_mode}
+- Assessment Completed: {user_profile["assessment"].get("completed", False)}
+
+Respond to their question or message in a helpful, educational way that's appropriate for their level.
+Always provide explanations in {native_lang_name}, with examples in {target_lang_name} when relevant.
+Be encouraging and supportive.
+If they ask about grammar, vocabulary, or language concepts, provide clear explanations with examples.
+If they practice in {target_lang_name}, provide constructive feedback and corrections.
+
+Remember to:
+1. Match your response complexity to their proficiency level
+2. Provide translations when helpful
+3. Encourage continued learning
+4. Suggest related practice activities when appropriate
+"""
+        
+        # استفاده از API قدیمی OpenAI
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ]
+        )
+        
+        return response.choices[0].message['content']
+        
+    except Exception as e:
+        logger.error(f"Error generating personalized response: {e}")
+        
+        # Fallback response
+        error_message = "I'm here to help you learn! Feel free to ask me any questions about grammar, vocabulary, or language learning tips."
+        translated_error = await translate_text(error_message, "en", native_lang_code)
+        
+        return translated_error
+
+# [Rest of the functions remain the same as in the previous version]
+# Including: generate_assessment_questions, ask_next_assessment_question, complete_assessment, 
+# generate_curriculum_overview, generate_curriculum_day, generate_curriculum_response,
+# generate_learning_content, generate_response, help_command, reset_command, etc.
+
+# [Previous functions continue here - I'll include the key ones for completeness]
 
 async def generate_assessment_questions(target_lang, native_lang_code):
     """Generate assessment questions for the target language."""
@@ -1211,7 +1266,7 @@ async def generate_assessment_questions(target_lang, native_lang_code):
                 question["translation"] = await translate_text(question["question"], "auto", native_lang_code)
         
         return questions
-
+    
     except Exception as e:
         logger.error(f"Error generating assessment questions: {e}")
         # Fallback to simpler questions if there's an error
@@ -1220,7 +1275,7 @@ async def generate_assessment_questions(target_lang, native_lang_code):
 async def generate_simple_assessment_questions(target_lang, native_lang_code):
     """Generate simple assessment questions as a fallback."""
     questions = []
-
+    
     # Basic questions that should work for any language
     basic_questions = [
         "What is your name?",
@@ -1234,13 +1289,13 @@ async def generate_simple_assessment_questions(target_lang, native_lang_code):
         "What will you do tomorrow?",
         "Why are you learning this language?"
     ]
-
+    
     # Translate each question to the target language
     for i, question in enumerate(basic_questions):
         if i < ASSESSMENT_QUESTIONS_COUNT:
             try:
                 # Translate to target language
-                target_question = await translate_text(question, "en", LANGUAGES.get(target_lang, "en"))
+                target_question = await translate_text(question, "en", LANGUAGES[target_lang])
                 # Translate to native language
                 native_question = await translate_text(question, "en", native_lang_code)
                 
@@ -1259,7 +1314,7 @@ async def generate_simple_assessment_questions(target_lang, native_lang_code):
                     "type": "open_ended",
                     "difficulty": min(i+1, 10)
                 })
-
+    
     return questions
 
 async def ask_next_assessment_question(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id):
@@ -1267,33 +1322,33 @@ async def ask_next_assessment_question(update: Update, context: ContextTypes.DEF
     assessment_data = user_data[user_id]["assessment"]
     current_question_idx = assessment_data["current_question"]
     current_question = assessment_data["questions"][current_question_idx]
-
+    
     native_lang_code = user_data[user_id]["native_language"]["code"]
-
+    
     # Create the question message with both languages
     question_number = current_question_idx + 1
     total_questions = len(assessment_data["questions"])
-
+    
     # ترجمه عنوان سوال
     question_header = f"Question {question_number}/{total_questions}:"
     translated_header = await translate_text(question_header, "en", native_lang_code)
-
+    
     # متن سوال به زبان هدف و ترجمه آن
     target_question = current_question["question"]
     native_question = current_question["translation"]
-
+    
     # دستورالعمل پاسخ
     instruction = "Please answer in the language you are learning."
     translated_instruction = await translate_text(instruction, "en", native_lang_code)
-
+    
     # ترکیب همه بخش‌ها
     message = f"{translated_header}\n\n{target_question}\n\n{native_question}\n\n{translated_instruction}"
-
+    
     # اگر سوال چندگزینه‌ای است، گزینه‌ها را نمایش بده
     if current_question.get("type") == "multiple_choice" and "options" in current_question:
         message += "\n\n" + "\n".join([f"{i+1}. {option}" for i, option in enumerate(current_question["options"])])
         message += "\n\n" + await translate_text("Enter the number of your choice.", "en", native_lang_code)
-
+    
     # Trigger a reply handler for the user's answer
     if update.callback_query:
         # If coming from a callback (button press)
@@ -1309,7 +1364,7 @@ async def complete_assessment(update: Update, context: ContextTypes.DEFAULT_TYPE
     answers = assessment_data["answers"]
     target_lang = user_data[user_id]["target_language"]["name"]
     native_lang_code = user_data[user_id]["native_language"]["code"]
-
+    
     # Combine questions and answers for analysis
     qa_pairs = []
     for i, (question, answer) in enumerate(zip(questions, answers)):
@@ -1318,7 +1373,7 @@ async def complete_assessment(update: Update, context: ContextTypes.DEFAULT_TYPE
             "answer": answer,
             "difficulty": question.get("difficulty", i+1)
         })
-
+    
     # Analyze proficiency with OpenAI
     try:
         response = openai.ChatCompletion.create(
@@ -1642,7 +1697,7 @@ async def generate_learning_content(mode, target_lang, native_lang, proficiency,
         "phrases": f"List 5 useful everyday phrases in {target_lang} for {proficiency} level learners, with translations to {native_lang} and pronunciation guides.",
         "conversation": f"Start a simple conversation in {target_lang} appropriate for {proficiency} level learners. Provide translations to {native_lang}."
     }
-
+    
     try:
         # استفاده از API قدیمی OpenAI
         response = openai.ChatCompletion.create(
@@ -1665,54 +1720,30 @@ async def generate_learning_content(mode, target_lang, native_lang, proficiency,
         
         return translated_error
 
-async def generate_personalized_response(user_message, user_profile):
-    """Generate a personalized response based on user's profile and message."""
+async def generate_response(user_message, mode, target_lang, native_lang, native_lang_code, proficiency):
+    """Generate a response to the user's message based on learning mode."""
+    system_prompts = {
+        "curriculum": f"You are a language teacher creating a curriculum for {proficiency} level students learning {target_lang} from {native_lang}. Respond to their questions about the curriculum. Write your response in {native_lang}, with examples in {target_lang} when appropriate.",
+        "vocabulary": f"You are a language teacher helping {proficiency} level students learn {target_lang} vocabulary from {native_lang}. Provide vocabulary explanations, examples, and practice. Write your response in {native_lang}, with examples in {target_lang}.",
+        "phrases": f"You are a language teacher helping {proficiency} level students learn useful phrases in {target_lang} from {native_lang}. Provide phrase explanations, cultural context, and practice. Write your response in {native_lang}, with examples in {target_lang}.",
+        "conversation": f"You are a conversation partner for {proficiency} level students learning {target_lang} from {native_lang}. Maintain a natural conversation, correct major errors gently, and provide translations when helpful. Write your response in {native_lang} and {target_lang}."
+    }
+    
     try:
-        native_lang_code = user_profile["native_language"]["code"]
-        native_lang_name = user_profile["native_language"]["name"]
-        target_lang_name = user_profile["target_language"]["name"]
-        proficiency = user_profile.get("proficiency_level", "Beginner")
-        learning_mode = user_profile.get("learning_mode", "general")
-        
-        # Create a comprehensive prompt based on user's profile
-        system_prompt = f"""
-You are a personalized language learning assistant. Here's the user's profile:
-
-- Native Language: {native_lang_name}
-- Learning: {target_lang_name}
-- Proficiency Level: {proficiency}
-- Current Learning Mode: {learning_mode}
-- Assessment Completed: {user_profile["assessment"].get("completed", False)}
-
-Respond to their question or message in a helpful, educational way that's appropriate for their level.
-Always provide explanations in {native_lang_name}, with examples in {target_lang_name} when relevant.
-Be encouraging and supportive.
-If they ask about grammar, vocabulary, or language concepts, provide clear explanations with examples.
-If they practice in {target_lang_name}, provide constructive feedback and corrections.
-
-Remember to:
-1. Match your response complexity to their proficiency level
-2. Provide translations when helpful
-3. Encourage continued learning
-4. Suggest related practice activities when appropriate
-"""
-        
         # استفاده از API قدیمی OpenAI
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": system_prompts[mode]},
                 {"role": "user", "content": user_message}
             ]
         )
-        
         return response.choices[0].message['content']
-        
     except Exception as e:
-        logger.error(f"Error generating personalized response: {e}")
+        logger.error(f"Response generation error: {e}")
         
-        # Fallback response
-        error_message = "I'm here to help you learn! Feel free to ask me any questions about grammar, vocabulary, or language learning tips."
+        # ترجمه پیام خطا به زبان کاربر
+        error_message = "Sorry, I couldn't generate a response at this time. Please try again later."
         translated_error = await translate_text(error_message, "en", native_lang_code)
         
         return translated_error
@@ -1720,11 +1751,11 @@ Remember to:
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /help is issued."""
     user_id = update.effective_user.id
-
+    
     # Load user data if not in memory
     if user_id not in user_data:
         await load_user_data(user_id)
-
+    
     help_text = """
 Help & Instructions 📖
 
@@ -1744,7 +1775,7 @@ Help & Instructions 📖
 
 💡 Tip: The more you practice, the better you'll become!
 """
-
+    
     if user_id in user_data and user_data[user_id].get("native_language"):
         native_lang = user_data[user_id]["native_language"]["code"]
         
@@ -1752,7 +1783,7 @@ Help & Instructions 📖
         translated_help = await translate_text(help_text, "en", native_lang)
         
         # Add main menu button
-        main_menu_text = await translate_text("🏠 Main Menu", "en", native_lang_code)
+        main_menu_text = await translate_text("🏠 Main Menu", "en", native_lang)
         keyboard = [[InlineKeyboardButton(main_menu_text, callback_data="main_menu")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -1763,15 +1794,17 @@ Help & Instructions 📖
 async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reset user data when the command /reset is issued."""
     user_id = update.effective_user.id
-
+    
     # Load user data if not in memory
     if user_id not in user_data:
         await load_user_data(user_id)
-
+    
     if user_id in user_data:
         native_lang_code = None
+        native_lang_name = None
         if user_data[user_id].get("native_language"):
             native_lang_code = user_data[user_id]["native_language"]["code"]
+            native_lang_name = user_data[user_id]["native_language"]["name"]
         
         # Clear user data completely
         user_data[user_id] = {
@@ -1838,6 +1871,32 @@ def test_translation():
 
 def preload_common_translations():
     """Preload translations for common phrases to the cache."""
+    # این تابع را به صورت غیر async بازنویسی کردیم
+    common_phrases = {
+        "en": [
+            "Welcome to the Language Learning Bot! 🌍\n\nPlease select your native language:",
+            "Please select your native language:",
+            "Great! You've selected English as your native language. Now, please select the language you want to learn:",
+            "Please select the language you want to learn:",
+            "Excellent! You've chosen to learn English. Now, I'm going to ask you 10 questions to assess your current proficiency level.",
+            "Based on your sample, your proficiency level in English is: Beginner.\n\nPlease select a learning mode:",
+            "Curriculum",
+            "Vocabulary Practice",
+            "Useful Phrases",
+            "Conversation Practice",
+            "Previous",
+            "Next",
+            "Your learning progress has been reset. Please select the language you want to learn:",
+            "This bot helps you learn a new language. Commands:\n/start - Restart the language selection process\n/help - Show this help message\n/reset - Reset your learning progress",
+            "Sorry, I couldn't generate learning content at this time. Please try again later.",
+            "Sorry, I couldn't generate a response at this time. Please try again later.",
+            "Main Menu",
+            "Learning Modes",
+            "Back to Menu",
+            "Feel free to ask me any question!"
+        ]
+    }
+    
     logger.info("Preloading common translations...")
     translation_cache.save_cache()
     logger.info("Preloading completed.")
@@ -1846,10 +1905,10 @@ def main() -> None:
     """Start the bot."""
     # تست ترجمه
     test_translation()
-
+    
     # پیش‌بارگذاری ترجمه‌های پرکاربرد
     preload_common_translations()
-
+    
     # Create the Application
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
@@ -1859,7 +1918,6 @@ def main() -> None:
     application.add_handler(CommandHandler("reset", reset_command))
     application.add_handler(CallbackQueryHandler(button_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(MessageHandler(filters.VOICE, handle_voice_message))
 
     # Start the Bot
     application.run_polling()
