@@ -5,6 +5,11 @@ import re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 import openai  # استفاده از openai به روش قدیمی
+import io
+import tempfile
+from pydub import AudioSegment
+from gtts import gTTS
+import speech_recognition as sr
 
 # Import the translation cache
 from translation_cache import TranslationCache
@@ -1204,549 +1209,171 @@ Remember to:
         
         return translated_error
 
-# [Rest of the functions remain the same as in the previous version]
-# Including: generate_assessment_questions, ask_next_assessment_question, complete_assessment, 
-# generate_curriculum_overview, generate_curriculum_day, generate_curriculum_response,
-# generate_learning_content, generate_response, help_command, reset_command, etc.
-
-# [Previous functions continue here - I'll include the key ones for completeness]
-
-async def generate_assessment_questions(target_lang, native_lang_code):
-    """Generate assessment questions for the target language."""
+async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle voice messages from users."""
+    user_id = update.effective_user.id
+    
+    # Load user data if not in memory
+    if user_id not in user_data:
+        await load_user_data(user_id)
+    
+    # If user is not in our database, start the conversation
+    if user_id not in user_data:
+        await start(update, context)
+        return
+    
     try:
-        # Generate questions with OpenAI
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {
-                    "role": "system", 
-                    "content": f"""
-                    You are a language proficiency assessor for {target_lang}. 
-                    Create {ASSESSMENT_QUESTIONS_COUNT} assessment questions to determine a language learner's proficiency level (Beginner, Intermediate, Advanced).
-                    
-                    Questions should:
-                    1. Be of increasing difficulty
-                    2. Test grammar, vocabulary, comprehension, and expression
-                    3. Include a mix of multiple choice, short answer, and open-ended questions
-                    4. Be appropriate for assessing proficiency in {target_lang}
-                    
-                    Format your response as a JSON array of question objects with these fields:
-                    - question: The question text in the target language
-                    - translation: Translation of the question into the user's native language
-                    - type: The question type (multiple_choice, short_answer, open_ended)
-                    - options: Array of options (only for multiple_choice questions)
-                    - difficulty: The difficulty level (1-10)
-                    
-                    Do not include the correct answer in the output.
-                    """
-                }
-            ]
-        )
+        # Get voice message
+        voice = update.message.voice
         
-        # Extract and parse the questions
-        questions_json = response.choices[0].message['content']
-        try:
-            questions = json.loads(questions_json)
-        except json.JSONDecodeError:
-            # Try to extract JSON from the text if it's not pure JSON
-            import re
-            json_pattern = r'(\[\s*\{.*\}\s*\])'
-            match = re.search(json_pattern, questions_json, re.DOTALL)
-            if match:
-                questions_json = match.group(1)
-                questions = json.loads(questions_json)
-            else:
-                # Fallback to a simpler approach if JSON parsing fails
-                logger.error("Failed to parse JSON response for assessment questions")
-                questions = await generate_simple_assessment_questions(target_lang, native_lang_code)
+        # Download voice file
+        voice_file = await context.bot.get_file(voice.file_id)
         
-        # Translate questions to user's native language if needed
-        for question in questions:
-            if "translation" not in question or not question["translation"]:
-                question["translation"] = await translate_text(question["question"], "auto", native_lang_code)
-        
-        return questions
-    
-    except Exception as e:
-        logger.error(f"Error generating assessment questions: {e}")
-        # Fallback to simpler questions if there's an error
-        return await generate_simple_assessment_questions(target_lang, native_lang_code)
-
-async def generate_simple_assessment_questions(target_lang, native_lang_code):
-    """Generate simple assessment questions as a fallback."""
-    questions = []
-    
-    # Basic questions that should work for any language
-    basic_questions = [
-        "What is your name?",
-        "How are you today?",
-        "Can you count from 1 to 10?",
-        "What day is it today?",
-        "What is your favorite color?",
-        "What do you do for work or study?",
-        "Describe your family briefly.",
-        "What did you do yesterday?",
-        "What will you do tomorrow?",
-        "Why are you learning this language?"
-    ]
-    
-    # Translate each question to the target language
-    for i, question in enumerate(basic_questions):
-        if i < ASSESSMENT_QUESTIONS_COUNT:
-            try:
-                # Translate to target language
-                target_question = await translate_text(question, "en", LANGUAGES[target_lang])
-                # Translate to native language
-                native_question = await translate_text(question, "en", native_lang_code)
+        # Create temporary file for voice
+        with tempfile.NamedTemporaryFile(suffix='.ogg', delete=False) as temp_voice:
+            await voice_file.download_to_drive(temp_voice.name)
+            
+            # Convert OGG to WAV for speech recognition
+            audio = AudioSegment.from_ogg(temp_voice.name)
+            wav_file = temp_voice.name.replace('.ogg', '.wav')
+            audio.export(wav_file, format="wav")
+            
+            # Speech to text
+            recognizer = sr.Recognizer()
+            with sr.AudioFile(wav_file) as source:
+                audio_data = recognizer.record(source)
                 
-                questions.append({
-                    "question": target_question,
-                    "translation": native_question,
-                    "type": "open_ended",
-                    "difficulty": min(i+1, 10)
-                })
-            except Exception as e:
-                logger.error(f"Error translating simple assessment question: {e}")
-                # Fallback to English if translation fails
-                questions.append({
-                    "question": question,
-                    "translation": question,
-                    "type": "open_ended",
-                    "difficulty": min(i+1, 10)
-                })
-    
-    return questions
-
-async def ask_next_assessment_question(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id):
-    """Ask the next assessment question to the user."""
-    assessment_data = user_data[user_id]["assessment"]
-    current_question_idx = assessment_data["current_question"]
-    current_question = assessment_data["questions"][current_question_idx]
-    
-    native_lang_code = user_data[user_id]["native_language"]["code"]
-    
-    # Create the question message with both languages
-    question_number = current_question_idx + 1
-    total_questions = len(assessment_data["questions"])
-    
-    # ترجمه عنوان سوال
-    question_header = f"Question {question_number}/{total_questions}:"
-    translated_header = await translate_text(question_header, "en", native_lang_code)
-    
-    # متن سوال به زبان هدف و ترجمه آن
-    target_question = current_question["question"]
-    native_question = current_question["translation"]
-    
-    # دستورالعمل پاسخ
-    instruction = "Please answer in the language you are learning."
-    translated_instruction = await translate_text(instruction, "en", native_lang_code)
-    
-    # ترکیب همه بخش‌ها
-    message = f"{translated_header}\n\n{target_question}\n\n{native_question}\n\n{translated_instruction}"
-    
-    # اگر سوال چندگزینه‌ای است، گزینه‌ها را نمایش بده
-    if current_question.get("type") == "multiple_choice" and "options" in current_question:
-        message += "\n\n" + "\n".join([f"{i+1}. {option}" for i, option in enumerate(current_question["options"])])
-        message += "\n\n" + await translate_text("Enter the number of your choice.", "en", native_lang_code)
-    
-    # Trigger a reply handler for the user's answer
-    if update.callback_query:
-        # If coming from a callback (button press)
-        await update.callback_query.message.reply_text(message)
-    else:
-        # If coming from a message handler
-        await update.message.reply_text(message)
-
-async def complete_assessment(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id):
-    """Complete the assessment and determine proficiency level."""
-    assessment_data = user_data[user_id]["assessment"]
-    questions = assessment_data["questions"]
-    answers = assessment_data["answers"]
-    target_lang = user_data[user_id]["target_language"]["name"]
-    native_lang_code = user_data[user_id]["native_language"]["code"]
-    
-    # Combine questions and answers for analysis
-    qa_pairs = []
-    for i, (question, answer) in enumerate(zip(questions, answers)):
-        qa_pairs.append({
-            "question": question["question"],
-            "answer": answer,
-            "difficulty": question.get("difficulty", i+1)
-        })
-    
-    # Analyze proficiency with OpenAI
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {
-                    "role": "system", 
-                    "content": f"""
-                    You are a language proficiency assessor for {target_lang}. 
-                    Analyze the following question-answer pairs to determine the learner's proficiency level.
-                    Provide a detailed assessment and classify the learner into one of these levels:
-                    - Beginner: Basic vocabulary, simple sentences, frequent errors
-                    - Intermediate: Good vocabulary, can form complex sentences, some errors
-                    - Advanced: Rich vocabulary, complex sentence structures, few errors
+                try:
+                    # Try to recognize speech
+                    text = recognizer.recognize_google(audio_data)
+                    logger.info(f"Voice message transcribed: {text}")
                     
-                    For your response, include:
-                    1. A brief analysis of their strengths and weaknesses
-                    2. Their FINAL proficiency level (Beginner, Intermediate, or Advanced only)
-                    3. What they should focus on improving
+                    # Get user's language settings
+                    native_lang_code = user_data[user_id]["native_language"]["code"]
+                    target_lang_name = user_data[user_id]["target_language"]["name"]
+                    native_lang_name = user_data[user_id]["native_language"]["name"]
+                    proficiency = user_data[user_id].get("proficiency_level", "Beginner")
+                    current_state = user_data[user_id]["current_state"]
                     
-                    Format: Use JSON with the following structure:
-                    {{"analysis": "your analysis", "level": "their proficiency level", "focus_areas": ["area1", "area2", ...]}}
-                    """
-                },
-                {
-                    "role": "user", 
-                    "content": f"Assessment for {target_lang} learner:\n\n{json.dumps(qa_pairs, ensure_ascii=False)}"
-                }
-            ]
-        )
-        
-        # Extract the assessment result
-        result_text = response.choices[0].message['content']
-        
-        try:
-            # Try to parse as JSON
-            result = json.loads(result_text)
-            proficiency_level = result.get("level", "Beginner")
-            analysis = result.get("analysis", "")
-            focus_areas = result.get("focus_areas", [])
+                    # Add to learning history
+                    if "voice_interactions" not in user_data[user_id]:
+                        user_data[user_id]["voice_interactions"] = []
+                    
+                    user_data[user_id]["voice_interactions"].append(f"Voice: {text[:50]}...")
+                    
+                    # Keep only last 10 voice interactions
+                    if len(user_data[user_id]["voice_interactions"]) > 10:
+                        user_data[user_id]["voice_interactions"] = user_data[user_id]["voice_interactions"][-10:]
+                    
+                    # Save user data
+                    await save_user_data(user_id)
+                    
+                    # Generate response based on current state
+                    if current_state == "assessment_in_progress":
+                        # Handle assessment question response via voice
+                        current_question = user_data[user_id]["assessment"]["current_question"]
+                        
+                        # Store the answer
+                        user_data[user_id]["assessment"]["answers"].append(text)
+                        
+                        # Save user data
+                        await save_user_data(user_id)
+                        
+                        # Move to the next question or finish assessment
+                        if current_question + 1 < len(user_data[user_id]["assessment"]["questions"]):
+                            user_data[user_id]["assessment"]["current_question"] += 1
+                            await ask_next_assessment_question(update, context, user_id)
+                        else:
+                            # Assessment complete, evaluate proficiency
+                            await complete_assessment(update, context, user_id)
+                        return
+                    
+                    elif current_state.startswith("curriculum_day_"):
+                        day_number = int(current_state.split("_")[-1])
+                        
+                        # Generate response based on user's voice message and current day
+                        response_text = await generate_curriculum_response(
+                            text,
+                            day_number,
+                            target_lang_name,
+                            native_lang_name,
+                            native_lang_code,
+                            proficiency
+                        )
+                    else:
+                        # Generate general response based on user's profile
+                        response_text = await generate_personalized_response(
+                            text,
+                            user_data[user_id]
+                        )
+                    
+                    # Add voice interaction note
+                    voice_note = "\n\n🎤 Voice message received and processed!"
+                    translated_voice_note = await translate_text(voice_note, "en", native_lang_code)
+                    
+                    # Add menu suggestion
+                    menu_suggestion = "\n\n💡 Use /start to access the main menu anytime!"
+                    translated_menu_suggestion = await translate_text(menu_suggestion, "en", native_lang_code)
+                    
+                    full_response = response_text + translated_voice_note + translated_menu_suggestion
+                    
+                    # Convert response to speech
+                    try:
+                        # Determine language for TTS
+                        tts_lang = native_lang_code if native_lang_code in ['en', 'es', 'fr', 'de', 'it', 'pt', 'ru', 'ja', 'zh', 'ko', 'ar', 'hi', 'tr', 'nl', 'pl', 'uk', 'cs', 'el', 'he', 'th', 'vi', 'id', 'ms', 'tl', 'bn', 'ur', 'ta', 'te', 'kn', 'ml', 'sw', 'af', 'sq', 'hy', 'az', 'eu', 'be', 'bg', 'ca', 'hr', 'et', 'fil', 'gl', 'ka', 'gu', 'ht', 'is', 'ga', 'kk', 'km', 'lo', 'lv', 'lt', 'mk', 'mr', 'mn', 'ne', 'ro', 'sr', 'sk', 'sl', 'so', 'cy', 'yi', 'zu'] else 'en'
+                        
+                        # Create TTS
+                        tts = gTTS(text=response_text, lang=tts_lang, slow=False)
+                        
+                        # Save to temporary file
+                        with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_audio:
+                            tts.save(temp_audio.name)
+                            
+                            # Send voice response
+                            with open(temp_audio.name, 'rb') as audio_file:
+                                await update.message.reply_voice(
+                                    voice=audio_file,
+                                    caption=full_response[:1024]  # Telegram caption limit
+                                )
+                            
+                            # Clean up temporary file
+                            import os
+                            os.unlink(temp_audio.name)
+                            
+                    except Exception as tts_error:
+                        logger.error(f"TTS error: {tts_error}")
+                        # Fallback to text response if TTS fails
+                        await update.message.reply_text(full_response)
+                    
+                except sr.UnknownValueError:
+                    # Could not understand audio
+                    error_msg = "Sorry, I couldn't understand your voice message. Please try speaking more clearly or send a text message."
+                    translated_error = await translate_text(error_msg, "en", user_data[user_id]["native_language"]["code"])
+                    await update.message.reply_text(translated_error)
+                    
+                except sr.RequestError as e:
+                    # Could not request results from speech recognition service
+                    logger.error(f"Speech recognition error: {e}")
+                    error_msg = "Sorry, there was an error processing your voice message. Please try again or send a text message."
+                    translated_error = await translate_text(error_msg, "en", user_data[user_id]["native_language"]["code"])
+                    await update.message.reply_text(translated_error)
             
-            # Normalize the level
-            if "beginner" in proficiency_level.lower():
-                proficiency_level = "Beginner"
-            elif "intermediate" in proficiency_level.lower():
-                proficiency_level = "Intermediate"
-            elif "advanced" in proficiency_level.lower():
-                proficiency_level = "Advanced"
-            else:
-                proficiency_level = "Beginner"
-            
-        except json.JSONDecodeError:
-            # If not valid JSON, extract the level with simple logic
-            logger.error("Failed to parse JSON response for assessment result")
-            if "advanced" in result_text.lower():
-                proficiency_level = "Advanced"
-            elif "intermediate" in result_text.lower():
-                proficiency_level = "Intermediate"
-            else:
-                proficiency_level = "Beginner"
-            
-            # Extract analysis with a simplified approach
-            analysis = result_text
-            focus_areas = []
-        
-        # Store the proficiency level
-        user_data[user_id]["proficiency_level"] = proficiency_level
-        user_data[user_id]["assessment"]["completed"] = True
-        user_data[user_id]["current_state"] = "assessment_complete"
-        
-        # Save user data
-        await save_user_data(user_id)
-        
-        # Prepare the result message
-        original_message = f"""
-Assessment complete! Based on your answers, your proficiency level in {target_lang} is: {proficiency_level}.
-
-Analysis: {analysis}
-
-Focus areas: {', '.join(focus_areas) if focus_areas else 'General language skills'}
-
-Now, please select what you'd like to do next:
-"""
-        
-        # ترجمه پیام به زبان کاربر
-        translated_message = await translate_text(original_message, "en", native_lang_code)
-        
-        # Create learning mode selection keyboard with translated labels
-        mode_options = [
-            ("📚 Curriculum", "mode_curriculum"),
-            ("📝 Vocabulary Practice", "mode_vocabulary"),
-            ("💬 Useful Phrases", "mode_phrases"),
-            ("🗣️ Conversation Practice", "mode_conversation")
-        ]
-        
-        # Translate options
-        translated_options = []
-        for text, callback in mode_options:
-            # Extract emoji and text
-            emoji = text.split()[0] if text.split() else ""
-            text_part = " ".join(text.split()[1:]) if len(text.split()) > 1 else text
-            
-            translated_text = await translate_text(text_part, "en", native_lang_code)
-            translated_options.append((f"{emoji} {translated_text}", callback))
-        
-        keyboard = []
-        for text, callback in translated_options:
-            keyboard.append([InlineKeyboardButton(text, callback_data=callback)])
-        
-        # Add main menu button
-        main_menu_text = await translate_text("🏠 Main Menu", "en", native_lang_code)
-        keyboard.append([InlineKeyboardButton(main_menu_text, callback_data="main_menu")])
-        
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(
-            text=translated_message,
-            reply_markup=reply_markup
-        )
-        
+            # Clean up temporary files
+            import os
+            try:
+                os.unlink(temp_voice.name)
+                os.unlink(wav_file)
+            except:
+                pass
+                
     except Exception as e:
-        logger.error(f"Error analyzing assessment: {e}")
-        
-        # Fallback to a simpler assessment
-        proficiency_level = await simple_assess_proficiency(answers, target_lang)
-        user_data[user_id]["proficiency_level"] = proficiency_level
-        user_data[user_id]["assessment"]["completed"] = True
-        user_data[user_id]["current_state"] = "assessment_complete"
-        
-        # Save user data
-        await save_user_data(user_id)
-        
-        # Create simplified result message
-        original_message = f"""
-Assessment complete! Based on your answers, your proficiency level in {target_lang} is: {proficiency_level}.
-
-Now, please select what you'd like to do next:
-"""
-        
-        # ترجمه پیام به زبان کاربر
-        translated_message = await translate_text(original_message, "en", native_lang_code)
-        
-        # Create learning mode selection keyboard with translated labels
-        mode_options = [
-            ("📚 Curriculum", "mode_curriculum"),
-            ("📝 Vocabulary Practice", "mode_vocabulary"),
-            ("💬 Useful Phrases", "mode_phrases"),
-            ("🗣️ Conversation Practice", "mode_conversation")
-        ]
-        
-        # Translate options
-        translated_options = []
-        for text, callback in mode_options:
-            # Extract emoji and text
-            emoji = text.split()[0] if text.split() else ""
-            text_part = " ".join(text.split()[1:]) if len(text.split()) > 1 else text
-            
-            translated_text = await translate_text(text_part, "en", native_lang_code)
-            translated_options.append((f"{emoji} {translated_text}", callback))
-        
-        keyboard = []
-        for text, callback in translated_options:
-            keyboard.append([InlineKeyboardButton(text, callback_data=callback)])
-        
-        # Add main menu button
-        main_menu_text = await translate_text("🏠 Main Menu", "en", native_lang_code)
-        keyboard.append([InlineKeyboardButton(main_menu_text, callback_data="main_menu")])
-        
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(
-            text=translated_message,
-            reply_markup=reply_markup
-        )
-
-async def simple_assess_proficiency(answers, language):
-    """Simple assessment based on answer length and complexity."""
-    try:
-        # For simplicity, we'll use the average answer length as a basic heuristic
-        # This is a fallback and not a proper assessment
-        total_length = sum(len(answer) for answer in answers)
-        avg_length = total_length / len(answers) if answers else 0
-        
-        # Very simple heuristic based on average answer length
-        if avg_length < 10:
-            return "Beginner"
-        elif avg_length < 30:
-            return "Intermediate"
+        logger.error(f"Voice message handling error: {e}")
+        error_msg = "Sorry, there was an error processing your voice message. Please try again."
+        if user_id in user_data and user_data[user_id].get("native_language"):
+            translated_error = await translate_text(error_msg, "en", user_data[user_id]["native_language"]["code"])
+            await update.message.reply_text(translated_error)
         else:
-            return "Advanced"
-    except Exception as e:
-        logger.error(f"Error in simple assessment: {e}")
-        return "Beginner"  # Default to beginner on error
-
-async def generate_curriculum_overview(target_lang, native_lang, proficiency, native_lang_code):
-    """Generate a 5-day curriculum overview."""
-    try:
-        # استفاده از API قدیمی OpenAI
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {
-                    "role": "system", 
-                    "content": f"""
-                    You are a language curriculum designer. Create a 5-day curriculum for {proficiency} level students learning {target_lang} from {native_lang}.
-                    
-                    For each day, provide:
-                    1. A brief title/theme for the day
-                    2. A short description of what will be covered (1-2 sentences)
-                    
-                    Format your response as a clear, organized curriculum overview. Write in {native_lang}.
-                    Keep it concise but informative. Do not include detailed lessons yet.
-                    """
-                },
-                {
-                    "role": "user", 
-                    "content": f"Create a 5-day curriculum for {proficiency} level {target_lang} learners who speak {native_lang}."
-                }
-            ]
-        )
-        
-        curriculum_overview = response.choices[0].message['content']
-        return curriculum_overview
-        
-    except Exception as e:
-        logger.error(f"Error generating curriculum overview: {e}")
-        
-        # ترجمه پیام خطا به زبان کاربر
-        error_message = "Sorry, I couldn't generate a curriculum at this time. Please try again later."
-        translated_error = await translate_text(error_message, "en", native_lang_code)
-        
-        return translated_error
-
-async def generate_curriculum_day(day_number, target_lang, native_lang, proficiency, native_lang_code):
-    """Generate detailed content for a specific day in the curriculum."""
-    try:
-        # استفاده از API قدیمی OpenAI
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {
-                    "role": "system", 
-                    "content": f"""
-                    You are a language teacher creating detailed lesson content for Day {day_number} of a 5-day curriculum for {proficiency} level students learning {target_lang} from {native_lang}.
-                    
-                    Create a comprehensive lesson that includes:
-                    1. Vocabulary (5-10 words/phrases with translations and examples)
-                    2. Grammar point(s) appropriate for {proficiency} level
-                    3. Practice exercises or activities
-                    4. Cultural notes or interesting facts
-                    5. Homework or self-study suggestions
-                    
-                    Format your response in a clear, organized way with sections and examples.
-                    Write in {native_lang}, with {target_lang} examples where appropriate.
-                    Make it engaging and educational.
-                    """
-                },
-                {
-                    "role": "user", 
-                    "content": f"Create detailed lesson content for Day {day_number} of a 5-day curriculum for {proficiency} level {target_lang} learners who speak {native_lang}."
-                }
-            ]
-        )
-        
-        day_content = response.choices[0].message['content']
-        return day_content
-        
-    except Exception as e:
-        logger.error(f"Error generating curriculum day content: {e}")
-        
-        # ترجمه پیام خطا به زبان کاربر
-        error_message = f"Sorry, I couldn't generate content for Day {day_number} at this time. Please try again later."
-        translated_error = await translate_text(error_message, "en", native_lang_code)
-        
-        return translated_error
-
-async def generate_curriculum_response(user_message, day_number, target_lang, native_lang, native_lang_code, proficiency):
-    """Generate a response to the user's message in the context of the current curriculum day."""
-    try:
-        # استفاده از API قدیمی OpenAI
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {
-                    "role": "system", 
-                    "content": f"""
-                    You are a language teacher helping a {proficiency} level student with Day {day_number} of their {target_lang} curriculum.
-                    
-                    Respond to their question or comment in a helpful, educational way.
-                    If they ask about vocabulary, grammar, or exercises from Day {day_number}, provide detailed explanations.
-                    If they share their work or practice, provide constructive feedback and corrections.
-                    If they ask about something unrelated to the current day's lesson, gently guide them back to the topic.
-                    
-                    Write your response in {native_lang}, with {target_lang} examples where appropriate.
-                    Be encouraging and supportive.
-                    """
-                },
-                {
-                    "role": "user", 
-                    "content": user_message
-                }
-            ]
-        )
-        
-        return response.choices[0].message['content']
-        
-    except Exception as e:
-        logger.error(f"Error generating curriculum response: {e}")
-        
-        # ترجمه پیام خطا به زبان کاربر
-        error_message = "Sorry, I couldn't generate a response at this time. Please try again later."
-        translated_error = await translate_text(error_message, "en", native_lang_code)
-        
-        return translated_error
-
-async def generate_learning_content(mode, target_lang, native_lang, proficiency, native_lang_code):
-    """Generate learning content based on mode and proficiency."""
-    prompts = {
-        "curriculum": f"Create a weekly curriculum for {proficiency} level students learning {target_lang} from {native_lang}. Include daily activities, grammar points, and vocabulary themes.",
-        "vocabulary": f"Provide a list of 10 important {proficiency} level vocabulary words in {target_lang} with translations to {native_lang} and example sentences.",
-        "phrases": f"List 5 useful everyday phrases in {target_lang} for {proficiency} level learners, with translations to {native_lang} and pronunciation guides.",
-        "conversation": f"Start a simple conversation in {target_lang} appropriate for {proficiency} level learners. Provide translations to {native_lang}."
-    }
-    
-    try:
-        # استفاده از API قدیمی OpenAI
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": f"You are a language learning assistant. Provide helpful, structured content for language learners. Write your response in {native_lang}, with examples in {target_lang} when appropriate."},
-                {"role": "user", "content": prompts[mode]}
-            ]
-        )
-        content = response.choices[0].message['content']
-        
-        # No need to translate as the content already includes translations to native language
-        return content
-    except Exception as e:
-        logger.error(f"Content generation error: {e}")
-        
-        # ترجمه پیام خطا به زبان کاربر
-        error_message = "Sorry, I couldn't generate learning content at this time. Please try again later."
-        translated_error = await translate_text(error_message, "en", native_lang_code)
-        
-        return translated_error
-
-async def generate_response(user_message, mode, target_lang, native_lang, native_lang_code, proficiency):
-    """Generate a response to the user's message based on learning mode."""
-    system_prompts = {
-        "curriculum": f"You are a language teacher creating a curriculum for {proficiency} level students learning {target_lang} from {native_lang}. Respond to their questions about the curriculum. Write your response in {native_lang}, with examples in {target_lang} when appropriate.",
-        "vocabulary": f"You are a language teacher helping {proficiency} level students learn {target_lang} vocabulary from {native_lang}. Provide vocabulary explanations, examples, and practice. Write your response in {native_lang}, with examples in {target_lang}.",
-        "phrases": f"You are a language teacher helping {proficiency} level students learn useful phrases in {target_lang} from {native_lang}. Provide phrase explanations, cultural context, and practice. Write your response in {native_lang}, with examples in {target_lang}.",
-        "conversation": f"You are a conversation partner for {proficiency} level students learning {target_lang} from {native_lang}. Maintain a natural conversation, correct major errors gently, and provide translations when helpful. Write your response in {native_lang} and {target_lang}."
-    }
-    
-    try:
-        # استفاده از API قدیمی OpenAI
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": system_prompts[mode]},
-                {"role": "user", "content": user_message}
-            ]
-        )
-        return response.choices[0].message['content']
-    except Exception as e:
-        logger.error(f"Response generation error: {e}")
-        
-        # ترجمه پیام خطا به زبان کاربر
-        error_message = "Sorry, I couldn't generate a response at this time. Please try again later."
-        translated_error = await translate_text(error_message, "en", native_lang_code)
-        
-        return translated_error
+            await update.message.reply_text(error_msg)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /help is issued."""
@@ -1918,6 +1545,7 @@ def main() -> None:
     application.add_handler(CommandHandler("reset", reset_command))
     application.add_handler(CallbackQueryHandler(button_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(MessageHandler(filters.VOICE, handle_voice_message))
 
     # Start the Bot
     application.run_polling()
